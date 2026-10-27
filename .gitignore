@@ -13,3 +13,6 @@ BundleArtifacts/
 /runs/
 /models/
 *.log
+
+# Generated spike media
+/spikes/m0/premiere/bundle/
