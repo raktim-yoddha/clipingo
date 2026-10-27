@@ -1,0 +1,15 @@
+# Rust
+/target/
+
+# .NET / WinUI
+bin/
+obj/
+*.user
+.vs/
+AppPackages/
+BundleArtifacts/
+
+# Local data
+/runs/
+/models/
+*.log
