@@ -298,8 +298,13 @@ NVIDIA, CPU elsewhere), one model per language:
   whisper.cpp's own converter (pinned v1.9.5) in a throwaway `uv` env; the checkpoint is deleted afterwards.
 - Model manager (Settings → Speech models, `clip models install`): resumable downloads, OS file lock so two
   processes never write the same file, progress streamed over JSON-RPC notifications.
-- Word times from whisper.cpp `-ml 1 -sow` (one segment per word); `--dtw` token timestamps are the fallback if
-  `-ml 1` proves too coarse.
+- Both fine-tunes emit no usable timestamp tokens (a whole 30 s window comes back as one segment), so `-ml 1`
+  word times are interpolated and dense Devanagari overflows the ~224-token window budget (last words dropped,
+  then up to 5 temperature fallbacks: 96 s for 22 s of Hindi). Instead: Silero speech spans (whisper.cpp's
+  `whisper-vad-speech-segments`) are packed into chunks of at most 12 s (Hindi) / 28 s (others), spans joined by
+  0.2 s of silence; all chunks go through one `whisper-cli` call with `-nt -mc 0 -dtw <preset>`, and DTW token
+  times are mapped back to the source. Pauses are never decoded. Word edges are then refined with the loudness
+  envelope's silences (a clause-final word keeps the speech before its pause).
 - `auto`: whisper large-v3-turbo detects the language mid-stream; English → English model, otherwise Hinglish
   (falls back to Hindi).
 - Transcripts cached per (file, size, mtime, model).

@@ -54,6 +54,49 @@ fn wav_data_range(header: &[u8]) -> Option<(usize, usize)> {
     None
 }
 
+fn wav_header(data_len: u32) -> Vec<u8> {
+    let mut h = b"RIFF".to_vec();
+    h.extend_from_slice(&(36 + data_len).to_le_bytes());
+    h.extend_from_slice(b"WAVEfmt \x10\0\0\0\x01\0\x01\0"); // PCM, mono
+    h.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+    h.extend_from_slice(&(SAMPLE_RATE * 2).to_le_bytes());
+    h.extend_from_slice(b"\x02\0\x10\0data"); // 2-byte frames, 16 bit
+    h.extend_from_slice(&data_len.to_le_bytes());
+    h
+}
+
+/// Writes each chunk of a 16 kHz mono s16 WAV to `dir/NNNN.wav`: its `(start, end)` spans (seconds) joined by
+/// `gap_s` of silence. Returns the file names.
+pub fn write_chunks(wav: &Path, chunks: &[Vec<(f64, f64)>], gap_s: f64, dir: &Path) -> Result<Vec<PathBuf>> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut file = std::fs::File::open(wav).with_context(|| format!("cannot open {}", wav.display()))?;
+    let mut header = vec![0u8; 4096];
+    let n = file.read(&mut header)?;
+    let (offset, len) = wav_data_range(&header[..n]).context("not a PCM WAV file")?;
+    let byte = |t: f64| ((t.max(0.0) * SAMPLE_RATE as f64) as usize * 2).min(len);
+    let gap = vec![0u8; byte(gap_s)];
+    let mut names = Vec::with_capacity(chunks.len());
+    for (i, spans) in chunks.iter().enumerate() {
+        let mut pcm = Vec::new();
+        for (k, &(s, e)) in spans.iter().enumerate() {
+            if k > 0 {
+                pcm.extend_from_slice(&gap);
+            }
+            let at = pcm.len();
+            pcm.resize(at + byte(e).saturating_sub(byte(s)), 0);
+            file.seek(SeekFrom::Start((offset + byte(s)) as u64))?;
+            file.read_exact(&mut pcm[at..])?;
+        }
+        let name = PathBuf::from(format!("{i:04}.wav"));
+        let mut out = std::io::BufWriter::new(std::fs::File::create(dir.join(&name))?);
+        out.write_all(&wav_header(pcm.len() as u32))?;
+        out.write_all(&pcm)?;
+        out.flush()?;
+        names.push(name);
+    }
+    Ok(names)
+}
+
 /// RMS loudness of a 16 kHz mono s16 WAV at `ENVELOPE_RATE` values per second, streamed in blocks.
 pub fn loudness_envelope(wav: &Path) -> Result<Vec<f32>> {
     use std::io::{Read, Seek, SeekFrom};
@@ -122,9 +165,10 @@ pub fn silences(envelope: &[f32], rate: f64, min_len_s: f64) -> Vec<(f64, f64)> 
     out
 }
 
-/// Pull word edges out of silences: whisper's word segments run on until the next word, swallowing pauses.
-/// A silence in a word's tail ends the word there; one at its head starts it later. Words entirely inside
-/// a silence are left alone (quiet speech is still speech).
+/// Pull word edges out of silences: word times run on until the next word (swallowing pauses) or start a little
+/// early (DTW alignment). A word ending in punctuation is followed by its pause, so the pause ends it; otherwise
+/// the word keeps the side of the silence that holds more of it. Words entirely inside a silence are left alone
+/// (quiet speech is still speech).
 pub fn refine_words(words: &mut [crate::Word], silences: &[(f64, f64)]) {
     const MIN_WORD_S: f64 = 0.08;
     let mut first = 0;
@@ -133,10 +177,18 @@ pub fn refine_words(words: &mut [crate::Word], silences: &[(f64, f64)]) {
             first += 1;
         }
         let original_end = w.end;
+        let ends_clause = w
+            .text
+            .trim_end_matches(['"', '\'', ')', '”', '’'])
+            .ends_with(['.', ',', '?', '!', ':', ';', '…', '।', '॥']);
         for &(s, e) in silences[first..].iter().take_while(|(s, _)| *s < original_end) {
-            if s > w.start + MIN_WORD_S {
+            let (before, after) = (s - w.start, w.end - e);
+            if before.max(after) <= MIN_WORD_S {
+                continue;
+            }
+            if before > MIN_WORD_S && (ends_clause || before >= after) {
                 w.end = w.end.min(s);
-            } else if e < w.end - MIN_WORD_S {
+            } else {
                 w.start = w.start.max(e);
             }
         }
@@ -166,6 +218,16 @@ mod tests {
         refine_words(&mut words, &s);
         assert!((words[1].end - 1.0).abs() < 0.02, "pause moved out of the word: {words:?}");
         assert!((words[2].start - 2.5).abs() < 0.02);
+
+        // DTW-style early start: the word is really spoken after the pause.
+        let mut early = vec![crate::Word { text: "pehle".into(), start: 0.9, end: 2.8 }];
+        refine_words(&mut early, &s);
+        assert!((early[0].start - 2.5).abs() < 0.02 && (early[0].end - 2.8).abs() < 1e-9, "{early:?}");
+
+        // Same timing, but the word closes a sentence: the pause follows it.
+        let mut last = vec![crate::Word { text: "faster.".into(), start: 0.9, end: 2.8 }];
+        refine_words(&mut last, &s);
+        assert!((last[0].start - 0.9).abs() < 1e-9 && (last[0].end - 1.0).abs() < 0.02, "{last:?}");
     }
 
     #[test]
@@ -202,6 +264,24 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(env.len(), 3);
         assert!(env[0] < 0.01 && env[1] > 0.99 && env[2] < 0.01, "{env:?}");
+    }
+
+    #[test]
+    fn writes_chunks_as_wavs() {
+        let s: Vec<i16> = (1..=32_000).map(|i| i as i16).collect(); // 2 s, sample k holds k + 1
+        let dir = std::env::temp_dir().join(format!("clipingo-chunks-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("src.wav");
+        std::fs::write(&src, wav_bytes(&s, true)).unwrap();
+        let names = write_chunks(&src, &[vec![(0.5, 1.0), (1.5, 9.0)]], 0.25, &dir).unwrap();
+        let wav = std::fs::read(dir.join(&names[0])).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let (off, len) = wav_data_range(&wav).unwrap();
+        assert_eq!((off, len), (44, 2 * (8000 + 4000 + 8000)), "0.5 s + 0.25 s gap + 0.5 s clamped to the end");
+        let sample = |k: usize| i16::from_le_bytes([wav[off + 2 * k], wav[off + 2 * k + 1]]);
+        assert_eq!((sample(0), sample(7999)), (8001, 16_000), "first span");
+        assert_eq!((sample(8000), sample(11_999)), (0, 0), "silent gap");
+        assert_eq!(sample(12_000), 24_001, "second span starts at 1.5 s");
     }
 
     #[test]

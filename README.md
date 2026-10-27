@@ -42,8 +42,10 @@ cargo run -p clip -- models install all
 
 Files go to `%LOCALAPPDATA%\Clipingo` (`bin\whisper`, `models`); downloads resume if interrupted. The Hinglish and
 Hindi models are converted once to ggml with whisper.cpp's converter, which needs [uv](https://docs.astral.sh/uv/).
-`auto` detects the language mid-stream: English → English model, otherwise Hinglish (then Hindi). Transcripts are
-cached in `%LOCALAPPDATA%\Clipingo\cache\transcripts`; pass `refresh` to redo one.
+`auto` detects the language mid-stream: English → English model, otherwise Hinglish (then Hindi). Speech is cut
+into short chunks with Silero VAD and decoded in one whisper.cpp call; word times come from DTW alignment
+(the fine-tunes' own timestamps are unusable). Transcripts are cached in
+`%LOCALAPPDATA%\Clipingo\cache\transcripts`; pass `refresh` to redo one.
 
 ### Workflow
 

@@ -50,6 +50,11 @@ pub struct ModelSpec {
     pub whisper_lang: &'static str,
     /// File name inside the models folder.
     pub file: &'static str,
+    /// whisper.cpp DTW alignment-head preset (`-dtw`) for word times; must match the base architecture.
+    pub dtw: &'static str,
+    /// Longest audio one decode gets (seconds). Fine-tunes emit no usable timestamps, so each chunk is one
+    /// segment and must fit whisper's ~224-token budget; Devanagari spends ~10-15 tokens per second.
+    pub chunk_s: f64,
     pub source: Source,
     /// Approximate download size, for the UI.
     pub download_mb: u32,
@@ -64,6 +69,8 @@ pub const MODELS: &[ModelSpec] = &[
         language: Language::English,
         whisper_lang: "en",
         file: "ggml-large-v3-turbo.bin",
+        dtw: "large.v3.turbo",
+        chunk_s: 28.0,
         source: Source::Ggml { repo: "ggerganov/whisper.cpp", file: "ggml-large-v3-turbo.bin" },
         download_mb: 1620,
     },
@@ -73,6 +80,8 @@ pub const MODELS: &[ModelSpec] = &[
         language: Language::Hinglish,
         whisper_lang: "en",
         file: "ggml-hindi2hinglish-apex.bin",
+        dtw: "large.v3.turbo",
+        chunk_s: 28.0,
         source: Source::Convert { repo: "Oriserve/Whisper-Hindi2Hinglish-Apex", files: &["model.safetensors"] },
         download_mb: 1620,
     },
@@ -82,6 +91,8 @@ pub const MODELS: &[ModelSpec] = &[
         language: Language::Hindi,
         whisper_lang: "hi",
         file: "ggml-vaani-hindi-large-v3.bin",
+        dtw: "large.v3",
+        chunk_s: 12.0,
         source: Source::Convert {
             repo: "ARTPARK-IISc/whisper-large-v3-vaani-hindi",
             files: &[
