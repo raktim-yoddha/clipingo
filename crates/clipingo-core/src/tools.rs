@@ -34,10 +34,18 @@ fn release_url(name: &str) -> Option<&'static str> {
         ("yt-dlp", "windows", _) => Some("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"),
         ("yt-dlp", "macos", _) => Some("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"),
         ("yt-dlp", "linux", "x86_64") => Some("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"),
-        ("deno", "windows", "x86_64") => Some("https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"),
-        ("deno", "macos", "aarch64") => Some("https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip"),
-        ("deno", "macos", "x86_64") => Some("https://github.com/denoland/deno/releases/latest/download/deno-x86_64-apple-darwin.zip"),
-        ("deno", "linux", "x86_64") => Some("https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip"),
+        ("deno", "windows", "x86_64") => {
+            Some("https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip")
+        }
+        ("deno", "macos", "aarch64") => {
+            Some("https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip")
+        }
+        ("deno", "macos", "x86_64") => {
+            Some("https://github.com/denoland/deno/releases/latest/download/deno-x86_64-apple-darwin.zip")
+        }
+        ("deno", "linux", "x86_64") => {
+            Some("https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip")
+        }
         _ => None,
     }
 }
@@ -57,10 +65,19 @@ pub async fn install(name: &str, progress: ProgressFn<'_>) -> Result<PathBuf> {
     if target.is_file() {
         return Ok(target);
     }
-    let url = release_url(name).with_context(|| format!("no {name} build known for this OS; install it and put it on PATH"))?;
+    let url = release_url(name)
+        .with_context(|| format!("no {name} build known for this OS; install it and put it on PATH"))?;
     if url.ends_with(".zip") {
-        let zip = download(url, &crate::data_dir().join("downloads").join(format!("{name}.zip")), name, progress).await?;
-        let out = Command::new("tar").arg("-xf").arg(&zip).arg("-C").arg(bin_dir()).output().await.context("could not run tar")?;
+        let zip =
+            download(url, &crate::data_dir().join("downloads").join(format!("{name}.zip")), name, progress).await?;
+        let out = Command::new("tar")
+            .arg("-xf")
+            .arg(&zip)
+            .arg("-C")
+            .arg(bin_dir())
+            .output()
+            .await
+            .context("could not run tar")?;
         if !out.status.success() {
             bail!("unpacking {name} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
         }

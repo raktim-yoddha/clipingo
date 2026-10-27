@@ -60,7 +60,9 @@ fn failure_reason(stderr: &str) -> Option<String> {
     // Generic follow-up lines ("Nothing was written…", "Error while opening encoder…") hide the cause.
     let generic = |l: &&str| {
         let l = l.to_ascii_lowercase();
-        l.contains("nothing was written") || l.contains("error while opening encoder") || l.contains("conversion failed")
+        l.contains("nothing was written")
+            || l.contains("error while opening encoder")
+            || l.contains("conversion failed")
     };
     let line = lines.iter().find(|l| !generic(l)).or(lines.first())?;
     let text = match (line.starts_with('['), line.find("] ")) {
@@ -73,12 +75,16 @@ fn failure_reason(stderr: &str) -> Option<String> {
 /// User-facing advice for an encoder failure; `None` when the hardware simply isn't there.
 fn hint_for(encoder: &str, reason: &str, has_nvidia_gpu: bool) -> Option<String> {
     let r = reason.to_ascii_lowercase();
-    let driver_too_old = r.contains("driver does not support") || r.contains("api version") || r.contains("minimum required nvidia driver");
+    let driver_too_old = r.contains("driver does not support")
+        || r.contains("api version")
+        || r.contains("minimum required nvidia driver");
     if encoder.contains("nvenc") && (driver_too_old || has_nvidia_gpu) {
         return Some(if driver_too_old {
             format!("Update your NVIDIA GPU driver to enable NVENC hardware encoding ({reason}).")
         } else {
-            format!("An NVIDIA GPU is present but NVENC did not start; updating the GPU driver usually fixes this ({reason}).")
+            format!(
+                "An NVIDIA GPU is present but NVENC did not start; updating the GPU driver usually fixes this ({reason})."
+            )
         });
     }
     if r.contains("driver") {
@@ -95,7 +101,9 @@ async fn probe_encoder(name: &'static str, label: &'static str, has_nvidia_gpu: 
         .output();
     let (works, error) = match tokio::time::timeout(Duration::from_secs(20), run).await {
         Ok(Ok(out)) if out.status.success() => (true, None),
-        Ok(Ok(out)) => (false, failure_reason(&String::from_utf8_lossy(&out.stderr)).or(Some("encoder failed to open".into()))),
+        Ok(Ok(out)) => {
+            (false, failure_reason(&String::from_utf8_lossy(&out.stderr)).or(Some("encoder failed to open".into())))
+        }
         Ok(Err(e)) => (false, Some(format!("could not run ffmpeg: {e}"))),
         Err(_) => (false, Some("timed out after 20 s".into())),
     };
@@ -132,7 +140,11 @@ pub async fn check() -> SystemReport {
         .output()
         .await
     {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
         _ => Vec::new(),
     };
     let has_ffmpeg = tools.iter().any(|t| t.name == "ffmpeg" && t.found);
@@ -201,7 +213,10 @@ mod tests {
             failure_reason(NVENC_OLD_DRIVER).as_deref(),
             Some("Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0")
         );
-        assert_eq!(failure_reason("[out#0/null @ 01] Nothing was written into output file").as_deref(), Some("Nothing was written into output file"));
+        assert_eq!(
+            failure_reason("[out#0/null @ 01] Nothing was written into output file").as_deref(),
+            Some("Nothing was written into output file")
+        );
         assert_eq!(failure_reason(""), None);
     }
 

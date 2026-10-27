@@ -84,7 +84,11 @@ pub const MODELS: &[ModelSpec] = &[
         file: "ggml-vaani-hindi-large-v3.bin",
         source: Source::Convert {
             repo: "ARTPARK-IISc/whisper-large-v3-vaani-hindi",
-            files: &["model.safetensors.index.json", "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"],
+            files: &[
+                "model.safetensors.index.json",
+                "model-00001-of-00002.safetensors",
+                "model-00002-of-00002.safetensors",
+            ],
         },
         download_mb: 6170,
     },
@@ -199,7 +203,10 @@ pub async fn download(url: &str, dest: &Path, stage: &str, progress: ProgressFn<
     // Open without truncating: lock first, then reset, so we never clobber a file another process holds.
     let mut std_file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&part)?;
     if std_file.try_lock().is_err() {
-        bail!("{} is already being downloaded by another Clipingo process", dest.file_name().unwrap_or_default().to_string_lossy());
+        bail!(
+            "{} is already being downloaded by another Clipingo process",
+            dest.file_name().unwrap_or_default().to_string_lossy()
+        );
     }
     if !resumed {
         std_file.set_len(0)?;
@@ -207,7 +214,11 @@ pub async fn download(url: &str, dest: &Path, stage: &str, progress: ProgressFn<
     std::io::Seek::seek(&mut std_file, std::io::SeekFrom::End(0))?;
     let mut file = tokio::fs::File::from_std(std_file);
     let mut last = std::time::Instant::now();
-    while let Some(chunk) = resp.chunk().await.map_err(|e| anyhow::anyhow!("download interrupted (run install again to resume): {}", e.without_url()))? {
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| anyhow::anyhow!("download interrupted (run install again to resume): {}", e.without_url()))?
+    {
         file.write_all(&chunk).await?;
         done += chunk.len() as u64;
         if last.elapsed() > Duration::from_millis(500) {
@@ -235,11 +246,18 @@ pub async fn install_runtime(progress: ProgressFn<'_>) -> Result<PathBuf> {
         bail!("install whisper.cpp for this OS and put whisper-cli on PATH (macOS: brew install whisper-cpp)");
     };
     let root = crate::data_dir().join("bin").join("whisper");
-    let zip = download(url, &crate::data_dir().join("downloads").join("whisper-bin-win-cuda-x64.zip"), "whisper.cpp runtime", progress).await?;
+    let zip = download(
+        url,
+        &crate::data_dir().join("downloads").join("whisper-bin-win-cuda-x64.zip"),
+        "whisper.cpp runtime",
+        progress,
+    )
+    .await?;
     tokio::fs::create_dir_all(&root).await?;
     progress(Progress { stage: "Unpacking whisper.cpp".into(), done: 0, total: None });
     // Windows 10+ ships bsdtar, which reads zip files.
-    let out = Command::new("tar").arg("-xf").arg(&zip).arg("-C").arg(&root).output().await.context("could not run tar")?;
+    let out =
+        Command::new("tar").arg("-xf").arg(&zip).arg("-C").arg(&root).output().await.context("could not run tar")?;
     if !out.status.success() {
         bail!("unpacking whisper.cpp failed: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
@@ -261,8 +279,13 @@ pub async fn install(id: &str, progress: ProgressFn<'_>) -> Result<PathBuf> {
         Source::Convert { repo, files } => {
             let src = crate::data_dir().join("downloads").join("hf").join(repo.replace('/', "--"));
             for f in HF_FILES.iter().chain(files.iter()) {
-                download(&format!("https://huggingface.co/{repo}/resolve/main/{f}"), &src.join(f), &format!("{} · {f}", spec.label), progress)
-                    .await?;
+                download(
+                    &format!("https://huggingface.co/{repo}/resolve/main/{f}"),
+                    &src.join(f),
+                    &format!("{} · {f}", spec.label),
+                    progress,
+                )
+                .await?;
             }
             convert(&src, &dest, spec.label, progress).await?;
             // The ggml file holds everything; the multi-GB checkpoint is no longer needed.
@@ -276,7 +299,9 @@ pub async fn install(id: &str, progress: ProgressFn<'_>) -> Result<PathBuf> {
 async fn convert(src: &Path, dest: &Path, label: &str, progress: ProgressFn<'_>) -> Result<()> {
     let tools = crate::data_dir().join("downloads").join("converter");
     let script = download(
-        &format!("https://raw.githubusercontent.com/ggml-org/whisper.cpp/{WHISPER_CPP_TAG}/models/convert-h5-to-ggml.py"),
+        &format!(
+            "https://raw.githubusercontent.com/ggml-org/whisper.cpp/{WHISPER_CPP_TAG}/models/convert-h5-to-ggml.py"
+        ),
         &tools.join("convert-h5-to-ggml.py"),
         "converter",
         progress,
@@ -284,7 +309,9 @@ async fn convert(src: &Path, dest: &Path, label: &str, progress: ProgressFn<'_>)
     .await?;
     // The converter expects <dir>/whisper/assets/mel_filters.npz (openai/whisper repo layout).
     download(
-        &format!("https://raw.githubusercontent.com/openai/whisper/{OPENAI_WHISPER_TAG}/whisper/assets/mel_filters.npz"),
+        &format!(
+            "https://raw.githubusercontent.com/openai/whisper/{OPENAI_WHISPER_TAG}/whisper/assets/mel_filters.npz"
+        ),
         &tools.join("whisper").join("assets").join("mel_filters.npz"),
         "mel filters",
         progress,
@@ -296,7 +323,18 @@ async fn convert(src: &Path, dest: &Path, label: &str, progress: ProgressFn<'_>)
     tokio::fs::create_dir_all(&out_dir).await?;
     progress(Progress { stage: format!("Converting {label} (one-time, a few minutes)"), done: 0, total: None });
     let out = Command::new("uv")
-        .args(["run", "--no-project", "--python", "3.12", "--with", "torch", "--with", "transformers", "--with", "numpy"])
+        .args([
+            "run",
+            "--no-project",
+            "--python",
+            "3.12",
+            "--with",
+            "torch",
+            "--with",
+            "transformers",
+            "--with",
+            "numpy",
+        ])
         .arg(&script)
         .arg(src)
         .arg(&tools)
@@ -307,7 +345,10 @@ async fn convert(src: &Path, dest: &Path, label: &str, progress: ProgressFn<'_>)
         .context("converting needs uv (https://docs.astral.sh/uv/): install it and try again")?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        bail!("model conversion failed: {}", err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("unknown error"));
+        bail!(
+            "model conversion failed: {}",
+            err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("unknown error")
+        );
     }
     tokio::fs::create_dir_all(dest.parent().expect("models dir")).await?;
     tokio::fs::rename(out_dir.join("ggml-model.bin"), dest).await.context("converter produced no ggml-model.bin")?;
@@ -346,7 +387,11 @@ mod tests {
         for lang in [Language::English, Language::Hinglish, Language::Hindi] {
             assert!(for_language(lang).is_some(), "{lang:?}");
         }
-        assert_eq!(for_language(Language::Hinglish).unwrap().whisper_lang, "en", "Apex decodes Roman Hinglish with the en token");
+        assert_eq!(
+            for_language(Language::Hinglish).unwrap().whisper_lang,
+            "en",
+            "Apex decodes Roman Hinglish with the en token"
+        );
         assert_eq!(for_language(Language::Hindi).unwrap().whisper_lang, "hi");
         let ids: std::collections::HashSet<_> = MODELS.iter().map(|m| m.file).collect();
         assert_eq!(ids.len(), MODELS.len(), "distinct files");

@@ -83,7 +83,8 @@ fn plan_cuts(words: &[Word], start: f64, end: f64, cut_dead_air: bool) -> (Vec<(
     } else {
         vec![(0, window_ms)]
     };
-    let keeps: Vec<(f64, f64)> = keeps_ms.iter().map(|&(a, b)| (start + a as f64 / 1000.0, start + b as f64 / 1000.0)).collect();
+    let keeps: Vec<(f64, f64)> =
+        keeps_ms.iter().map(|&(a, b)| (start + a as f64 / 1000.0, start + b as f64 / 1000.0)).collect();
 
     // Map each kept word onto the output timeline; words whose middle was cut (fillers) disappear.
     let mut out = Vec::new();
@@ -249,7 +250,12 @@ async fn run_ffmpeg(args: &[String], cwd: &Path, duration: f64, stage: &str, pro
 }
 
 /// Render the given candidates (1-based ranks) of a run into `<run>/clips`.
-pub async fn render_clips(run_id: &str, ranks: &[usize], opts: &RenderOptions, progress: ProgressFn<'_>) -> Result<Vec<RenderedClip>> {
+pub async fn render_clips(
+    run_id: &str,
+    ranks: &[usize],
+    opts: &RenderOptions,
+    progress: ProgressFn<'_>,
+) -> Result<Vec<RenderedClip>> {
     let (run, words) = pipeline::load_run(run_id)?;
     let out_dir = Path::new(&run.dir).join("clips");
     std::fs::create_dir_all(&out_dir)?;
@@ -259,7 +265,11 @@ pub async fn render_clips(run_id: &str, ranks: &[usize], opts: &RenderOptions, p
 
     let mut done = Vec::new();
     for &rank in ranks {
-        let c = run.candidates.iter().find(|c| c.rank == rank).with_context(|| format!("no candidate #{rank} in this run"))?;
+        let c = run
+            .candidates
+            .iter()
+            .find(|c| c.rank == rank)
+            .with_context(|| format!("no candidate #{rank} in this run"))?;
         let (keeps, clip_words) = plan_cuts(&words, c.start, c.end, opts.cut_dead_air);
         let duration: f64 = keeps.iter().map(|(a, b)| b - a).sum();
         let stem = format!("clip_{rank:02}_{}", if opts.format == Format::Vertical { "9x16" } else { "16x9" });
@@ -276,10 +286,27 @@ pub async fn render_clips(run_id: &str, ranks: &[usize], opts: &RenderOptions, p
         // Input seek (fast) to the clip start; the graph trims relative to it.
         let seek = c.start;
         let graph_name = format!("{stem}.graph.txt");
-        std::fs::write(out_dir.join(&graph_name), filter_graph(&keeps, seek, opts.format, opts.captions.then_some(ass_name.as_str())))?;
+        std::fs::write(
+            out_dir.join(&graph_name),
+            filter_graph(&keeps, seek, opts.format, opts.captions.then_some(ass_name.as_str())),
+        )?;
         let video_name = format!("{stem}.mp4");
-        let mut args: Vec<String> = vec!["-ss".into(), format!("{seek:.3}"), "-to".into(), format!("{:.3}", c.end + 0.5), "-i".into(), run.media.clone()];
-        args.extend(["-/filter_complex".into(), graph_name.clone(), "-map".into(), "[vout]".into(), "-map".into(), "[aout]".into()]);
+        let mut args: Vec<String> = vec![
+            "-ss".into(),
+            format!("{seek:.3}"),
+            "-to".into(),
+            format!("{:.3}", c.end + 0.5),
+            "-i".into(),
+            run.media.clone(),
+        ];
+        args.extend([
+            "-/filter_complex".into(),
+            graph_name.clone(),
+            "-map".into(),
+            "[vout]".into(),
+            "-map".into(),
+            "[aout]".into(),
+        ]);
         args.extend(encoder_args(encoder).into_iter().map(String::from));
         args.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"].map(String::from));
         args.push(video_name.clone());
@@ -311,7 +338,13 @@ mod tests {
 
     #[test]
     fn cuts_long_pause_and_shifts_words() {
-        let words = [w("before", 99.0, 99.5), w("hello", 100.0, 100.5), w("um", 100.7, 101.0), w("there", 104.0, 104.5), w("after", 110.0, 110.5)];
+        let words = [
+            w("before", 99.0, 99.5),
+            w("hello", 100.0, 100.5),
+            w("um", 100.7, 101.0),
+            w("there", 104.0, 104.5),
+            w("after", 110.0, 110.5),
+        ];
         let (keeps, out) = plan_cuts(&words, 100.0, 105.0, true);
         assert!(keeps.len() >= 2, "3 s gap must be cut: {keeps:?}");
         let texts: Vec<_> = out.iter().map(|x| x.text.as_str()).collect();

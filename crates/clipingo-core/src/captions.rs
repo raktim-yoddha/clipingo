@@ -78,7 +78,12 @@ pub fn ass(words: &[Word], width: u32, height: u32) -> String {
                     if j == i { format!("{{\\c{HIGHLIGHT}\\fscx108\\fscy108}}{t}{{\\r}}") } else { t }
                 })
                 .collect();
-            out.push_str(&format!("Dialogue: 0,{},{},Main,,0,0,0,,{}\n", ass_time(start), ass_time(end.max(start + 0.05)), text.join(" ")));
+            out.push_str(&format!(
+                "Dialogue: 0,{},{},Main,,0,0,0,,{}\n",
+                ass_time(start),
+                ass_time(end.max(start + 0.05)),
+                text.join(" ")
+            ));
         }
     }
     out
@@ -120,7 +125,10 @@ pub fn srt(words: &[Word]) -> String {
     for w in words {
         if let Some(last) = cur.last() {
             let len: usize = cur.iter().map(|x| x.text.chars().count() + 1).sum::<usize>() + w.text.chars().count();
-            if len > SRT_LINE_CHARS * 2 || w.end - cur[0].start > SRT_MAX_CUE_S || w.start - last.end >= PAUSE_BREAK_S + 0.1 {
+            if len > SRT_LINE_CHARS * 2
+                || w.end - cur[0].start > SRT_MAX_CUE_S
+                || w.start - last.end >= PAUSE_BREAK_S + 0.1
+            {
                 flush(&mut cur, &mut cues);
             }
         }
@@ -149,7 +157,8 @@ mod tests {
 
     #[test]
     fn pages_break_at_size_sentence_and_pause() {
-        let words = [w("one", 0.0, 0.2), w("two", 0.3, 0.5), w("three.", 0.6, 0.8), w("four", 0.9, 1.0), w("five", 2.0, 2.2)];
+        let words =
+            [w("one", 0.0, 0.2), w("two", 0.3, 0.5), w("three.", 0.6, 0.8), w("four", 0.9, 1.0), w("five", 2.0, 2.2)];
         let p = pages(&words, 3);
         let texts: Vec<Vec<&str>> = p.iter().map(|pg| pg.iter().map(|x| x.text.as_str()).collect()).collect();
         assert_eq!(texts, vec![vec!["one", "two", "three."], vec!["four"], vec!["five"]]);

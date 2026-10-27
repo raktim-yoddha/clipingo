@@ -58,7 +58,8 @@ fn is_word_char(c: char) -> bool {
 
 /// Lowercased, punctuation-free text padded with spaces so phrases match on word boundaries.
 fn norm(s: &str) -> String {
-    let cleaned: String = s.to_lowercase().replace('’', "'").chars().map(|c| if is_word_char(c) { c } else { ' ' }).collect();
+    let cleaned: String =
+        s.to_lowercase().replace('’', "'").chars().map(|c| if is_word_char(c) { c } else { ' ' }).collect();
     format!(" {} ", cleaned.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
@@ -144,8 +145,10 @@ fn features(s: &Sentence, loud: Option<&Loudness>) -> Features {
     let n = norm(&s.text);
     let words = s.words.len().max(1) as f64;
     let first = n.split_whitespace().next().unwrap_or("");
-    let is_q = s.text.trim_end().ends_with(['?', '？']) || lex.question.iter().any(|q| n.starts_with(&format!(" {q} ")));
-    let numbers = count(&n, &lex.number) + s.text.split(|c: char| !c.is_ascii_digit()).filter(|t| !t.is_empty()).count() as f64;
+    let is_q =
+        s.text.trim_end().ends_with(['?', '？']) || lex.question.iter().any(|q| n.starts_with(&format!(" {q} ")));
+    let numbers =
+        count(&n, &lex.number) + s.text.split(|c: char| !c.is_ascii_digit()).filter(|t| !t.is_empty()).count() as f64;
     let terms = n
         .split_whitespace()
         .filter(|w| w.chars().count() > 2 && !lex.stop.contains(w) && !w.chars().all(|c| c.is_ascii_digit()))
@@ -181,17 +184,37 @@ fn features(s: &Sentence, loud: Option<&Loudness>) -> Features {
     let you = count(&n, &lex.you);
     let short_ref = words <= 6.0 && count(&n, &lex.anaphor) > 0.0;
     let mut hook = 0.0;
-    if f.is_q { hook += 0.34; }
-    if f.story > 0.0 { hook += 0.22; }
-    if f.insight > 0.0 { hook += 0.16; }
+    if f.is_q {
+        hook += 0.34;
+    }
+    if f.story > 0.0 {
+        hook += 0.22;
+    }
+    if f.insight > 0.0 {
+        hook += 0.16;
+    }
     hook -= (fillers * 0.14).min(0.3);
-    if short_ref { hook -= 0.22; }
+    if short_ref {
+        hook -= 0.22;
+    }
     hook += (f.hook_hits * 0.12).min(0.3);
-    if you > 0.0 { hook += 0.12; }
-    if f.numbers > 0.0 { hook += 0.08; }
-    if words <= 12.0 { hook += 0.1; } else if words > 30.0 { hook -= 0.12; }
-    if f.starts_cont && !f.is_q { hook -= 0.3; }
-    if f.emotion > 0.0 { hook += 0.06; }
+    if you > 0.0 {
+        hook += 0.12;
+    }
+    if f.numbers > 0.0 {
+        hook += 0.08;
+    }
+    if words <= 12.0 {
+        hook += 0.1;
+    } else if words > 30.0 {
+        hook -= 0.12;
+    }
+    if f.starts_cont && !f.is_q {
+        hook -= 0.3;
+    }
+    if f.emotion > 0.0 {
+        hook += 0.06;
+    }
     f.hook = hook.clamp(-0.4, 1.0);
     f
 }
@@ -283,7 +306,8 @@ pub fn find(words: &[Word], opts: &FindOptions, loud: Option<&Loudness>) -> Vec<
             if dur < opts.min_len - 2.0 {
                 continue;
             }
-            let (mut emo, mut story, mut ins, mut deb, mut laugh, mut wc, mut gaps) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            let (mut emo, mut story, mut ins, mut deb, mut laugh, mut wc, mut gaps) =
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
             let (mut rms_sum, mut rms_n, mut rms_var) = (0.0, 0.0, 0.0);
             let mut tf: HashMap<&str, f64> = HashMap::new();
             for k in i..=j {
@@ -321,10 +345,12 @@ pub fn find(words: &[Word], opts: &FindOptions, loud: Option<&Loudness>) -> Vec<
             }
             let pace = (1.0 - ((wc / dur.max(1.0)) / median_wps.max(0.5) - 1.12).abs() * 1.4).clamp(0.0, 1.0);
             let last = &feats[j];
-            let ends_clean = last.complete && sents.get(j + 1).is_none_or(|nx| nx.start - e1 > 0.45 || !feats[j + 1].starts_cont);
+            let ends_clean =
+                last.complete && sents.get(j + 1).is_none_or(|nx| nx.start - e1 > 0.45 || !feats[j + 1].starts_cont);
             let first_word = norm(&sents[i].text).split_whitespace().next().unwrap_or("").to_string();
             let starts_ref = !fi.is_q && lex.anaphor.contains(&first_word.as_str());
-            let mut complete = if last.complete { 0.55 } else { 0.1 } + 0.45 * (1.0 - (dur - target).abs() / target.max(10.0)).clamp(0.0, 1.0);
+            let mut complete = if last.complete { 0.55 } else { 0.1 }
+                + 0.45 * (1.0 - (dur - target).abs() / target.max(10.0)).clamp(0.0, 1.0);
             if last.words <= 12.0 && (last.emotion > 0.0 || last.numbers > 0.0 || last.hook_hits > 0.0) {
                 complete += 0.12;
             }
@@ -332,9 +358,17 @@ pub fn find(words: &[Word], opts: &FindOptions, loud: Option<&Loudness>) -> Vec<
             scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(b.0)));
             let topic = (scored.iter().take(5).map(|x| x.1).sum::<f64>() / (8.0 + wc * 0.12)).clamp(0.0, 1.0);
             let repeat_top = if scored.first().is_some_and(|x| tf[x.0] >= 3.0) { 0.1 } else { 0.0 };
-            let raw = 0.3 * hook.clamp(0.0, 1.0) + 0.12 * emotion + 0.1 * energy + 0.05 * dynamics + 0.08 * pace
-                + 0.15 * complete.clamp(0.0, 1.0) + 0.08 * (topic + repeat_top) + 0.07 * story_s.max(insight_s)
-                + 0.05 * debate_s + 0.03 * laugh_s - 0.06 * gaps
+            let raw = 0.3 * hook.clamp(0.0, 1.0)
+                + 0.12 * emotion
+                + 0.1 * energy
+                + 0.05 * dynamics
+                + 0.08 * pace
+                + 0.15 * complete.clamp(0.0, 1.0)
+                + 0.08 * (topic + repeat_top)
+                + 0.07 * story_s.max(insight_s)
+                + 0.05 * debate_s
+                + 0.03 * laugh_s
+                - 0.06 * gaps
                 - if fi.starts_cont && !fi.is_q { 0.05 } else { 0.0 }
                 + if ends_clean { 0.03 } else { -0.05 }
                 - if starts_ref { 0.07 } else { 0.0 };
@@ -420,15 +454,33 @@ fn reasons_for(c: &Window) -> Vec<String> {
     } else if hook > 0.4 {
         r.push(("Strong opener".into(), hook));
     }
-    if emotion > 0.35 { r.push(("Emotional".into(), emotion)); }
-    if c.story > 0.3 { r.push(("Story".into(), c.story)); }
-    if c.insight > 0.3 { r.push(("Takeaway".into(), c.insight)); }
-    if c.debate > 0.35 { r.push(("Hot take".into(), c.debate)); }
-    if energy > 0.65 { r.push(("High energy".into(), energy)); }
-    if laugh > 0.6 { r.push(("Funny".into(), laugh)); }
-    if complete > 0.7 { r.push(("Complete thought".into(), complete * 0.6)); }
-    if pace > 0.75 { r.push(("Fast-paced".into(), pace * 0.5)); }
-    if let (true, Some(t)) = (topic > 0.5, c.top.first()) { r.push((format!("Topic: {t}"), topic * 0.5)); }
+    if emotion > 0.35 {
+        r.push(("Emotional".into(), emotion));
+    }
+    if c.story > 0.3 {
+        r.push(("Story".into(), c.story));
+    }
+    if c.insight > 0.3 {
+        r.push(("Takeaway".into(), c.insight));
+    }
+    if c.debate > 0.35 {
+        r.push(("Hot take".into(), c.debate));
+    }
+    if energy > 0.65 {
+        r.push(("High energy".into(), energy));
+    }
+    if laugh > 0.6 {
+        r.push(("Funny".into(), laugh));
+    }
+    if complete > 0.7 {
+        r.push(("Complete thought".into(), complete * 0.6));
+    }
+    if pace > 0.75 {
+        r.push(("Fast-paced".into(), pace * 0.5));
+    }
+    if let (true, Some(t)) = (topic > 0.5, c.top.first()) {
+        r.push((format!("Topic: {t}"), topic * 0.5));
+    }
     r.sort_by(|a, b| b.1.total_cmp(&a.1));
     r.into_iter().take(3).map(|x| x.0).collect()
 }
@@ -442,7 +494,8 @@ fn title_for(sents: &[Sentence], feats: &[Features], c: &Window) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
     let max_w = if text.ends_with('?') { 12 } else { 10 };
     let mut t = if words.len() > max_w {
-        let clause: Vec<&str> = text.split([',', ';', ':', '—', '–']).next().unwrap_or(text).split_whitespace().collect();
+        let clause: Vec<&str> =
+            text.split([',', ';', ':', '—', '–']).next().unwrap_or(text).split_whitespace().collect();
         let picked = if (4..=max_w).contains(&clause.len()) { clause } else { words[..max_w - 1].to_vec() };
         format!("{}…", picked.join(" "))
     } else {
@@ -502,7 +555,9 @@ mod tests {
 
     #[test]
     fn hindi_question_counts_as_hook() {
-        let s = Sentence { start: 0.0, end: 3.0, text: "क्या आपको पता है सबसे बड़ी गलती क्या है?".into(), words: &[] };
+        let s = Sentence {
+            start: 0.0, end: 3.0, text: "क्या आपको पता है सबसे बड़ी गलती क्या है?".into(), words: &[]
+        };
         let f = features(&s, None);
         assert!(f.is_q && f.hook > 0.3, "hook = {}", f.hook);
     }

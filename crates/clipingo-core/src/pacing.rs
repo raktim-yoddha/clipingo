@@ -3,9 +3,7 @@
 //! Port of BridgeClip's `compute_keep_intervals`. Times are ms inside the window.
 
 /// Filler words cut under tight pacing (English set plus common Hindi/Hinglish fillers).
-const FILLERS: &[&str] = &[
-    "um", "uh", "uhm", "umm", "uhh", "erm", "er", "hmm", "hm", "mm", "mhm", "matlab", "मतलब",
-];
+const FILLERS: &[&str] = &["um", "uh", "uhm", "umm", "uhh", "erm", "er", "hmm", "hm", "mm", "mhm", "matlab", "मतलब"];
 /// Longest pause kept as-is per layout; `None` = never cut (silence on a screen is usually something happening).
 pub const MAX_PAUSE_TALKING_HEAD_MS: Option<i64> = Some(700);
 pub const MAX_PAUSE_SCREEN_CAM_MS: Option<i64> = Some(2000);

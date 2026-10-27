@@ -122,7 +122,11 @@ async fn dispatch(method: &str, params: Value, id: &Value, out: &UnboundedSender
 async fn respond(line: &str, out: &UnboundedSender<Value>) -> Option<Value> {
     let req: Request = match serde_json::from_str(line) {
         Ok(r) => r,
-        Err(e) => return Some(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": e.to_string() } })),
+        Err(e) => {
+            return Some(
+                json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": e.to_string() } }),
+            );
+        }
     };
     let id = req.id.clone().unwrap_or(Value::Null);
     let result = dispatch(&req.method, req.params, &id, out).await;
@@ -211,7 +215,10 @@ mod tests {
         assert_eq!(bad["error"]["code"], -32602);
         assert!(respond(r#"{"jsonrpc":"2.0","method":"version"}"#, &tx).await.is_none());
         assert_eq!(respond("not json", &tx).await.unwrap()["error"]["code"], -32700);
-        let unknown_model = respond(r#"{"jsonrpc":"2.0","id":4,"method":"models.install","params":{"id":"klingon"}}"#, &tx).await.unwrap();
+        let unknown_model =
+            respond(r#"{"jsonrpc":"2.0","id":4,"method":"models.install","params":{"id":"klingon"}}"#, &tx)
+                .await
+                .unwrap();
         assert!(unknown_model["error"]["message"].as_str().unwrap().contains("unknown model"));
     }
 }

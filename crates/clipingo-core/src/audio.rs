@@ -29,7 +29,11 @@ async fn ffmpeg(args: &[&str], what: &str) -> Result<()> {
 pub async fn extract_wav(input: &Path, out: &Path) -> Result<PathBuf> {
     let (i, o) = (input.to_string_lossy(), out.to_string_lossy());
     let rate = SAMPLE_RATE.to_string();
-    ffmpeg(&["-i", &i, "-vn", "-ac", "1", "-ar", &rate, "-c:a", "pcm_s16le", "-fflags", "+bitexact", &o], "audio extraction").await?;
+    ffmpeg(
+        &["-i", &i, "-vn", "-ac", "1", "-ar", &rate, "-c:a", "pcm_s16le", "-fflags", "+bitexact", &o],
+        "audio extraction",
+    )
+    .await?;
     Ok(out.to_path_buf())
 }
 
@@ -74,7 +78,8 @@ pub fn loudness_envelope(wav: &Path) -> Result<Vec<f32>> {
         if filled < 2 {
             break;
         }
-        let samples = buf[..filled - filled % 2].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f64 / 32768.0);
+        let samples =
+            buf[..filled - filled % 2].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f64 / 32768.0);
         let (sum, count) = samples.fold((0.0, 0usize), |(s, c), x| (s + x * x, c + 1));
         env.push((sum / count as f64).sqrt() as f32);
         if filled < buf.len() {

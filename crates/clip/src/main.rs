@@ -56,7 +56,9 @@ fn render_options(flags: &[&str]) -> Result<(Vec<usize>, RenderOptions)> {
 fn print_progress(p: Progress) {
     match p.total {
         Some(100) => eprint!("\r{}: {}%        ", p.stage, p.done),
-        Some(t) if t > 0 => eprint!("\r{}: {:.0}% ({} / {} MB)   ", p.stage, p.done as f64 * 100.0 / t as f64, p.done >> 20, t >> 20),
+        Some(t) if t > 0 => {
+            eprint!("\r{}: {:.0}% ({} / {} MB)   ", p.stage, p.done as f64 * 100.0 / t as f64, p.done >> 20, t >> 20)
+        }
         _ => eprint!("\r{}…                    ", p.stage),
     }
 }
@@ -90,7 +92,9 @@ async fn main() -> Result<()> {
             let words: Vec<Word> = serde_json::from_str(&text).context("transcript must be [{\"w\",\"s\",\"e\"}]")?;
             serde_json::to_value(scorer::find(&words, &scorer::FindOptions::default(), None))?
         }
-        ["transcribe", input, flags @ ..] => serde_json::to_value(pipeline::transcribe_file(input, &transcribe_options(flags)?, &progress).await?)?,
+        ["transcribe", input, flags @ ..] => {
+            serde_json::to_value(pipeline::transcribe_file(input, &transcribe_options(flags)?, &progress).await?)?
+        }
         ["run", input, flags @ ..] => {
             let opts = RunOptions { transcribe: transcribe_options(flags)?, find: None };
             serde_json::to_value(pipeline::create_run(input, &opts, &progress).await?)?

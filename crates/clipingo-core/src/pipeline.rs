@@ -54,7 +54,12 @@ fn stage(progress: ProgressFn<'_>, s: &str) {
 }
 
 /// Transcript plus the loudness envelope, from one audio extraction.
-async fn transcribe_with_loudness(media: &Path, duration: Option<f64>, opts: &TranscribeOptions, progress: ProgressFn<'_>) -> Result<(Transcript, Vec<f32>)> {
+async fn transcribe_with_loudness(
+    media: &Path,
+    duration: Option<f64>,
+    opts: &TranscribeOptions,
+    progress: ProgressFn<'_>,
+) -> Result<(Transcript, Vec<f32>)> {
     let work = Workspace::new()?;
     stage(progress, "Extracting audio");
     let wav = crate::audio::extract_wav(media, &work.0.join("audio.wav")).await?;
@@ -93,7 +98,9 @@ pub async fn create_run(input: &str, opts: &RunOptions, progress: ProgressFn<'_>
             local_file(&dest.to_string_lossy()).await?
         }
     };
-    let (mut transcript, envelope) = transcribe_with_loudness(Path::new(&media_info.input), media_info.duration_s, &opts.transcribe, progress).await?;
+    let (mut transcript, envelope) =
+        transcribe_with_loudness(Path::new(&media_info.input), media_info.duration_s, &opts.transcribe, progress)
+            .await?;
     // Word segments swallow pauses; trim them to the audio so pacing and captions see the silences.
     let quiet = crate::audio::silences(&envelope, crate::audio::ENVELOPE_RATE, 0.25);
     crate::audio::refine_words(&mut transcript.words, &quiet);
@@ -111,7 +118,11 @@ pub async fn create_run(input: &str, opts: &RunOptions, progress: ProgressFn<'_>
         media: media_info.input.clone(),
         source,
         media_info,
-        transcript: TranscriptSummary { model: transcript.model, language: transcript.language, words: transcript.words.len() },
+        transcript: TranscriptSummary {
+            model: transcript.model,
+            language: transcript.language,
+            words: transcript.words.len(),
+        },
         candidates,
     };
     std::fs::write(dir.join("run.json"), serde_json::to_vec_pretty(&run)?)?;
@@ -124,7 +135,8 @@ pub fn load_run(id: &str) -> Result<(Run, Vec<Word>)> {
         bail!("invalid run id");
     }
     let dir = runs_dir().join(id);
-    let run: Run = serde_json::from_slice(&std::fs::read(dir.join("run.json")).with_context(|| format!("run {id} not found"))?)?;
+    let run: Run =
+        serde_json::from_slice(&std::fs::read(dir.join("run.json")).with_context(|| format!("run {id} not found"))?)?;
     let words: Vec<Word> = serde_json::from_slice(&std::fs::read(dir.join("transcript.json"))?)?;
     Ok((run, words))
 }

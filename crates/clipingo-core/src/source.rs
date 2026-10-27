@@ -74,7 +74,13 @@ async fn run_json(cmd: &mut Command, what: &str) -> Result<Value> {
 async fn probe_youtube(url: &str) -> Result<SourceInfo> {
     // `--` ends option parsing so the URL can never be read as a flag.
     let v = run_json(
-        Command::new(crate::tools::resolve("yt-dlp")).args(crate::tools::yt_dlp_base_args()).args(["-J", "--no-playlist", "--no-warnings", "--", url]),
+        Command::new(crate::tools::resolve("yt-dlp")).args(crate::tools::yt_dlp_base_args()).args([
+            "-J",
+            "--no-playlist",
+            "--no-warnings",
+            "--",
+            url,
+        ]),
         "yt-dlp",
     )
     .await?;
@@ -97,7 +103,9 @@ async fn probe_youtube(url: &str) -> Result<SourceInfo> {
 async fn probe_file(path: &Path) -> Result<SourceInfo> {
     let path = path.canonicalize().context("cannot resolve file path")?;
     let v = run_json(
-        Command::new("ffprobe").args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"]).arg(&path),
+        Command::new("ffprobe")
+            .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
+            .arg(&path),
         "ffprobe",
     )
     .await?;
@@ -132,7 +140,10 @@ pub async fn download_youtube(url: &str, dest: &Path, progress: crate::models::P
         .args(crate::tools::yt_dlp_base_args())
         .args(["--no-playlist", "--no-warnings", "--newline", "-N", "8"])
         .args(["-f", "bv*[height<=1080][vcodec!^=av01]+ba/b[height<=1080]/b", "--merge-output-format", "mp4"])
-        .args(["--progress-template", "download:%(progress.downloaded_bytes)s/%(progress.total_bytes,progress.total_bytes_estimate)s"])
+        .args([
+            "--progress-template",
+            "download:%(progress.downloaded_bytes)s/%(progress.total_bytes,progress.total_bytes_estimate)s",
+        ])
         .arg("-o")
         .arg(dest)
         .args(["--", &url])
@@ -153,7 +164,10 @@ pub async fn download_youtube(url: &str, dest: &Path, progress: crate::models::P
     let out = child.wait_with_output().await?;
     if !out.status.success() || !dest.is_file() {
         let err = String::from_utf8_lossy(&out.stderr);
-        bail!("download failed: {}", err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("yt-dlp produced no file"));
+        bail!(
+            "download failed: {}",
+            err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("yt-dlp produced no file")
+        );
     }
     Ok(())
 }

@@ -50,13 +50,22 @@ pub fn route(language: Language, detected: Option<&str>, installed: &dyn Fn(Lang
     };
     wanted.iter().copied().find(|&l| installed(l)).ok_or_else(|| {
         let missing = models::for_language(wanted[0]).map_or("a speech model", |m| m.label);
-        anyhow::anyhow!("{missing} is not installed: Settings → Speech models, or `clip models install {}`", models::for_language(wanted[0]).map_or("all", |m| m.id))
+        anyhow::anyhow!(
+            "{missing} is not installed: Settings → Speech models, or `clip models install {}`",
+            models::for_language(wanted[0]).map_or("all", |m| m.id)
+        )
     })
 }
 
 /// Runs whisper-cli, streaming its stderr; with `-pp` in `extra`, "progress = N%" lines are reported.
 /// Returns all stderr text (language detection reads it).
-async fn run_whisper(cli: &Path, model: &Path, wav: &Path, extra: &[&str], progress: Option<(ProgressFn<'_>, &str)>) -> Result<String> {
+async fn run_whisper(
+    cli: &Path,
+    model: &Path,
+    wav: &Path,
+    extra: &[&str],
+    progress: Option<(ProgressFn<'_>, &str)>,
+) -> Result<String> {
     use tokio::io::{AsyncBufReadExt, BufReader};
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8).to_string();
     let mut child = Command::new(cli)
@@ -94,16 +103,27 @@ async fn run_whisper(cli: &Path, model: &Path, wav: &Path, extra: &[&str], progr
 async fn detect_language(cli: &Path, model: &Path, wav: &Path, at_ms: u64) -> Option<String> {
     let log = run_whisper(cli, model, wav, &["-dl", "-l", "auto", "-ot", &at_ms.to_string()], None).await.ok()?;
     // whisper prints e.g. "auto-detected language: hi (p = 0.912)".
-    log.lines().find_map(|l| l.split("auto-detected language:").nth(1)).and_then(|r| r.split_whitespace().next()).map(str::to_string)
+    log.lines()
+        .find_map(|l| l.split("auto-detected language:").nth(1))
+        .and_then(|r| r.split_whitespace().next())
+        .map(str::to_string)
 }
 
-async fn whisper_transcribe(cli: &Path, spec: &ModelSpec, model: &Path, wav: &Path, work: &Path, progress: ProgressFn<'_>) -> Result<Transcript> {
+async fn whisper_transcribe(
+    cli: &Path,
+    spec: &ModelSpec,
+    model: &Path,
+    wav: &Path,
+    work: &Path,
+    progress: ProgressFn<'_>,
+) -> Result<Transcript> {
     let base = work.join("whisper");
     let base_s = base.to_string_lossy();
     let stage = format!("Transcribing ({})", spec.label);
     progress(Progress { stage: stage.clone(), done: 0, total: Some(100) });
     // -ml 1 -sow: one segment per word with its own start/end (whisper.cpp word-level mode).
-    let mut args: Vec<String> = ["-l", spec.whisper_lang, "-ml", "1", "-sow", "-sns", "-pp", "-oj", "-of"].map(String::from).to_vec();
+    let mut args: Vec<String> =
+        ["-l", spec.whisper_lang, "-ml", "1", "-sow", "-sns", "-pp", "-oj", "-of"].map(String::from).to_vec();
     args.push(base_s.into_owned());
     // VAD: only speech is decoded, so word times do not drift through pauses.
     if let Some(vad) = models::vad_model() {
@@ -165,7 +185,8 @@ fn cache_path(input: &Path, model_file: &str) -> Option<PathBuf> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     // ponytail: SipHash key is only stable per toolchain; a toolchain change just means a cache miss.
     // VAD changes word timing, so it is part of the key.
-    (input.canonicalize().ok()?, meta.len(), meta.modified().ok()?, model_file, models::vad_model().is_some()).hash(&mut h);
+    (input.canonicalize().ok()?, meta.len(), meta.modified().ok()?, model_file, models::vad_model().is_some())
+        .hash(&mut h);
     Some(crate::data_dir().join("cache").join("transcripts").join(format!("{:016x}.json", h.finish())))
 }
 
@@ -186,8 +207,16 @@ impl Drop for Workspace {
 }
 
 /// Transcribe `input` (already-extracted 16 kHz `wav`), picking the model by language and reusing cached results.
-pub async fn transcribe(input: &Path, wav: &Path, duration_s: f64, opts: &TranscribeOptions, work: &Path, progress: ProgressFn<'_>) -> Result<Transcript> {
-    let cli = models::whisper_cli().context("whisper.cpp is not installed: Settings → Speech models, or `clip models install runtime`")?;
+pub async fn transcribe(
+    input: &Path,
+    wav: &Path,
+    duration_s: f64,
+    opts: &TranscribeOptions,
+    work: &Path,
+    progress: ProgressFn<'_>,
+) -> Result<Transcript> {
+    let cli = models::whisper_cli()
+        .context("whisper.cpp is not installed: Settings → Speech models, or `clip models install runtime`")?;
     let installed = |l: Language| models::for_language(l).and_then(models::installed).is_some();
 
     // Detection uses the stock multilingual English model (fine-tunes lose language ID).
@@ -201,7 +230,8 @@ pub async fn transcribe(input: &Path, wav: &Path, duration_s: f64, opts: &Transc
 
     let cache = cache_path(input, spec.file);
     if !opts.refresh
-        && let Some(t) = cache.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok())
+        && let Some(t) =
+            cache.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok())
     {
         return Ok(t);
     }
