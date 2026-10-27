@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use tokio::process::Command;
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     File,
@@ -15,7 +15,7 @@ pub enum SourceKind {
 }
 
 /// What the Create page's video card shows.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SourceInfo {
     pub kind: SourceKind,
     /// Canonical path or URL used for later steps.
@@ -73,7 +73,11 @@ async fn run_json(cmd: &mut Command, what: &str) -> Result<Value> {
 
 async fn probe_youtube(url: &str) -> Result<SourceInfo> {
     // `--` ends option parsing so the URL can never be read as a flag.
-    let v = run_json(Command::new("yt-dlp").args(["-J", "--no-playlist", "--no-warnings", "--", url]), "yt-dlp").await?;
+    let v = run_json(
+        Command::new(crate::tools::resolve("yt-dlp")).args(crate::tools::yt_dlp_base_args()).args(["-J", "--no-playlist", "--no-warnings", "--", url]),
+        "yt-dlp",
+    )
+    .await?;
     Ok(SourceInfo {
         kind: SourceKind::Youtube,
         input: v["webpage_url"].as_str().unwrap_or(url).to_string(),
@@ -117,6 +121,41 @@ async fn probe_file(path: &Path) -> Result<SourceInfo> {
         upload_date: None,
         was_live: false,
     })
+}
+
+/// Download a YouTube video (≤ 1080p, H.264/VP9, merged to MP4) to `dest`, reporting byte progress.
+// ponytail: one full download; the plan's two-pass (audio + proxy first, HQ ranges later) comes with long VODs.
+pub async fn download_youtube(url: &str, dest: &Path, progress: crate::models::ProgressFn<'_>) -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let url = youtube_url(url).context("not a YouTube video link")?;
+    let mut child = Command::new(crate::tools::resolve("yt-dlp"))
+        .args(crate::tools::yt_dlp_base_args())
+        .args(["--no-playlist", "--no-warnings", "--newline", "-N", "8"])
+        .args(["-f", "bv*[height<=1080][vcodec!^=av01]+ba/b[height<=1080]/b", "--merge-output-format", "mp4"])
+        .args(["--progress-template", "download:%(progress.downloaded_bytes)s/%(progress.total_bytes,progress.total_bytes_estimate)s"])
+        .arg("-o")
+        .arg(dest)
+        .args(["--", &url])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("could not start yt-dlp; install it from Settings")?;
+    let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
+    while let Some(line) = lines.next_line().await? {
+        if let Some((done, total)) = line.trim().split_once('/')
+            && let Ok(done) = done.parse::<f64>()
+        {
+            let total = total.parse::<f64>().ok().map(|t| t as u64);
+            progress(crate::models::Progress { stage: "Downloading video".into(), done: done as u64, total });
+        }
+    }
+    let out = child.wait_with_output().await?;
+    if !out.status.success() || !dest.is_file() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        bail!("download failed: {}", err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("yt-dlp produced no file"));
+    }
+    Ok(())
 }
 
 /// "30000/1001" → 29.97.

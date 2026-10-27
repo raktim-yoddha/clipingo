@@ -123,7 +123,7 @@ async fn first_line(program: &str, arg: &str) -> Option<String> {
 
 pub async fn check() -> SystemReport {
     let probes = TOOLS.iter().map(|&(name, arg, purpose, required)| async move {
-        let line = first_line(name, arg).await;
+        let line = first_line(&crate::tools::resolve(name).to_string_lossy(), arg).await;
         ToolStatus { name, purpose, required, found: line.is_some(), version: line }
     });
     let tools = futures_join(probes).await;
@@ -152,6 +152,21 @@ pub async fn check() -> SystemReport {
         whisper_cli: crate::models::whisper_cli().map(|p| p.to_string_lossy().into_owned()),
         speech_models: crate::models::status(),
     }
+}
+
+/// The encoder renders use: first that works in fallback order, probed once per process.
+pub async fn render_encoder() -> &'static str {
+    static CHOSEN: tokio::sync::OnceCell<&'static str> = tokio::sync::OnceCell::const_new();
+    CHOSEN
+        .get_or_init(|| async {
+            for &(name, label) in ENCODERS {
+                if probe_encoder(name, label, false).await.works {
+                    return name;
+                }
+            }
+            "libx264"
+        })
+        .await
 }
 
 /// First working encoder in fallback order.

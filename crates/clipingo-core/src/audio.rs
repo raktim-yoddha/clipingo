@@ -7,8 +7,8 @@ use tokio::process::Command;
 
 /// Speech models want 16 kHz mono.
 pub const SAMPLE_RATE: u32 = 16_000;
-/// Loudness envelope resolution (values per second), as the scorer expects.
-pub const ENVELOPE_RATE: f64 = 10.0;
+/// Loudness envelope resolution (values per second): 10 ms steps, fine enough to find pauses between words.
+pub const ENVELOPE_RATE: f64 = 100.0;
 
 async fn ffmpeg(args: &[&str], what: &str) -> Result<()> {
     let out = Command::new("ffmpeg")
@@ -84,9 +84,90 @@ pub fn loudness_envelope(wav: &Path) -> Result<Vec<f32>> {
     Ok(env)
 }
 
+/// Stretches of silence (seconds) at least `min_len_s` long. The threshold sits between the room's
+/// floor (10th percentile) and the talking level (90th percentile), so it adapts to each recording.
+/// Returns nothing when speech and floor are too close to tell apart (music under everything).
+pub fn silences(envelope: &[f32], rate: f64, min_len_s: f64) -> Vec<(f64, f64)> {
+    let db: Vec<f64> = envelope.iter().map(|&r| 20.0 * (r as f64).max(1e-5).log10()).collect();
+    if db.len() < 10 {
+        return Vec::new();
+    }
+    let mut sorted = db.clone();
+    sorted.sort_by(f64::total_cmp);
+    let (floor, talk) = (sorted[sorted.len() / 10], sorted[sorted.len() * 9 / 10]);
+    if talk - floor < 6.0 {
+        return Vec::new();
+    }
+    let threshold = floor + 0.3 * (talk - floor);
+    let min_len = (min_len_s * rate).ceil() as usize;
+    let mut out = Vec::new();
+    let mut run_start = None;
+    for (i, &v) in db.iter().chain(std::iter::once(&f64::INFINITY)).enumerate() {
+        match (v < threshold, run_start) {
+            (true, None) => run_start = Some(i),
+            (false, Some(s)) => {
+                if i - s >= min_len {
+                    out.push((s as f64 / rate, i as f64 / rate));
+                }
+                run_start = None;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Pull word edges out of silences: whisper's word segments run on until the next word, swallowing pauses.
+/// A silence in a word's tail ends the word there; one at its head starts it later. Words entirely inside
+/// a silence are left alone (quiet speech is still speech).
+pub fn refine_words(words: &mut [crate::Word], silences: &[(f64, f64)]) {
+    const MIN_WORD_S: f64 = 0.08;
+    let mut first = 0;
+    for w in words.iter_mut() {
+        while first < silences.len() && silences[first].1 <= w.start {
+            first += 1;
+        }
+        let original_end = w.end;
+        for &(s, e) in silences[first..].iter().take_while(|(s, _)| *s < original_end) {
+            if s > w.start + MIN_WORD_S {
+                w.end = w.end.min(s);
+            } else if e < w.end - MIN_WORD_S {
+                w.start = w.start.max(e);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_pauses_and_trims_swallowing_words() {
+        // 100 Hz: 1 s speech, 1.5 s silence, 1 s speech.
+        let mut env = vec![0.3f32; 100];
+        env.extend(vec![0.001f32; 150]);
+        env.extend(vec![0.3f32; 100]);
+        let s = silences(&env, 100.0, 0.25);
+        assert_eq!(s.len(), 1);
+        assert!((s[0].0 - 1.0).abs() < 0.02 && (s[0].1 - 2.5).abs() < 0.02, "{s:?}");
+
+        // whisper-style words with no gap: "tested," runs through the pause.
+        let mut words = vec![
+            crate::Word { text: "never".into(), start: 0.2, end: 0.6 },
+            crate::Word { text: "tested,".into(), start: 0.6, end: 2.5 },
+            crate::Word { text: "again".into(), start: 2.5, end: 3.0 },
+        ];
+        refine_words(&mut words, &s);
+        assert!((words[1].end - 1.0).abs() < 0.02, "pause moved out of the word: {words:?}");
+        assert!((words[2].start - 2.5).abs() < 0.02);
+    }
+
+    #[test]
+    fn music_bed_gives_no_silences() {
+        let env: Vec<f32> = (0..500).map(|i| 0.2 + 0.01 * (i % 7) as f32).collect();
+        assert!(silences(&env, 100.0, 0.25).is_empty());
+    }
 
     fn wav_bytes(samples: &[i16], extra_chunk: bool) -> Vec<u8> {
         let mut data = Vec::new();
@@ -106,10 +187,10 @@ mod tests {
 
     #[test]
     fn envelope_tracks_loud_and_quiet_tenths() {
-        // 0.1 s silence, 0.1 s full-scale square wave, 0.05 s tail.
-        let mut s = vec![0i16; 1600];
-        s.extend((0..1600).map(|i| if i % 2 == 0 { 32767 } else { -32767 }));
-        s.extend(vec![0i16; 800]);
+        // 10 ms silence, 10 ms full-scale square wave, 5 ms tail (one envelope value per 10 ms).
+        let mut s = vec![0i16; 160];
+        s.extend((0..160).map(|i| if i % 2 == 0 { 32767 } else { -32767 }));
+        s.extend(vec![0i16; 80]);
         let path = std::env::temp_dir().join(format!("clipingo-env-test-{}.wav", std::process::id()));
         std::fs::write(&path, wav_bytes(&s, true)).unwrap();
         let env = loudness_envelope(&path).unwrap();

@@ -26,6 +26,15 @@ const RUNTIME_ZIP: Option<&str> =
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 const RUNTIME_ZIP: Option<&str> = None; // macOS / Linux: install whisper.cpp (e.g. `brew install whisper-cpp`) and put whisper-cli on PATH
 
+/// Silero VAD for whisper.cpp: decoding only speech keeps word timestamps from drifting through
+/// long pauses (measured: ~5 s drift without it, < 0.1 s with it).
+const VAD_FILE: &str = "ggml-silero-v6.2.0.bin";
+const VAD_URL: &str = "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin";
+
+pub fn vad_model() -> Option<PathBuf> {
+    Some(models_dir().join(VAD_FILE)).filter(|p| p.is_file())
+}
+
 pub enum Source {
     /// A ready ggml file in a Hugging Face repo.
     Ggml { repo: &'static str, file: &'static str },
@@ -218,6 +227,7 @@ pub async fn download(url: &str, dest: &Path, stage: &str, progress: ProgressFn<
 
 /// Install whisper.cpp (Windows x64: official CUDA 12.4 build, which also runs on CPU).
 pub async fn install_runtime(progress: ProgressFn<'_>) -> Result<PathBuf> {
+    download(VAD_URL, &models_dir().join(VAD_FILE), "voice activity model", progress).await?;
     if let Some(cli) = whisper_cli() {
         return Ok(cli);
     }
@@ -281,6 +291,7 @@ async fn convert(src: &Path, dest: &Path, label: &str, progress: ProgressFn<'_>)
     )
     .await?;
 
+    force_float32_load(&src.join("config.json"))?;
     let out_dir = src.join("ggml-out");
     tokio::fs::create_dir_all(&out_dir).await?;
     progress(Progress { stage: format!("Converting {label} (one-time, a few minutes)"), done: 0, total: None });
@@ -303,9 +314,32 @@ async fn convert(src: &Path, dest: &Path, label: &str, progress: ProgressFn<'_>)
     Ok(())
 }
 
+/// transformers loads checkpoints in their stored dtype ("auto"); bf16 weights then break the converter's
+/// `.numpy()` ("unsupported ScalarType BFloat16"). Declaring float32 makes it upcast; the converter still writes f16.
+fn force_float32_load(config: &Path) -> Result<()> {
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(config)?)?;
+    let obj = v.as_object_mut().context("config.json is not an object")?;
+    obj.insert("torch_dtype".into(), "float32".into());
+    obj.insert("dtype".into(), "float32".into());
+    std::fs::write(config, serde_json::to_vec_pretty(&v)?)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bf16_config_is_forced_to_float32() {
+        let p = std::env::temp_dir().join(format!("clipingo-cfg-{}.json", std::process::id()));
+        std::fs::write(&p, r#"{"d_model":1280,"torch_dtype":"bfloat16"}"#).unwrap();
+        force_float32_load(&p).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        std::fs::remove_file(&p).ok();
+        assert_eq!(v["torch_dtype"], "float32");
+        assert_eq!(v["dtype"], "float32");
+        assert_eq!(v["d_model"], 1280);
+    }
 
     #[test]
     fn one_model_per_language_with_expected_decoding() {

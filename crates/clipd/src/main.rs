@@ -5,7 +5,7 @@
 use anyhow::Result;
 use clipingo_core::models::{self, Progress};
 use clipingo_core::transcribe::TranscribeOptions;
-use clipingo_core::{Word, pipeline, scorer, source, system};
+use clipingo_core::{Word, pipeline, render, scorer, source, system, tools};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -32,6 +32,15 @@ impl From<anyhow::Error> for RpcError {
 
 fn invalid_params(e: serde_json::Error) -> RpcError {
     RpcError { code: -32602, message: e.to_string() }
+}
+
+/// Progress callback that streams `progress` notifications tagged with the request id.
+fn notifier(out: &UnboundedSender<Value>, id: &Value) -> impl Fn(Progress) + Send + Sync + use<> {
+    let (tx, request) = (out.clone(), id.clone());
+    move |pr: Progress| {
+        let _ = tx.send(json!({ "jsonrpc": "2.0", "method": "progress",
+            "params": { "request": request, "stage": pr.stage, "done": pr.done, "total": pr.total } }));
+    }
 }
 
 async fn dispatch(method: &str, params: Value, id: &Value, out: &UnboundedSender<Value>) -> Result<Value, RpcError> {
@@ -64,35 +73,47 @@ async fn dispatch(method: &str, params: Value, id: &Value, out: &UnboundedSender
                 options: TranscribeOptions,
             }
             let p: P = serde_json::from_value(params).map_err(invalid_params)?;
-            Ok(json!(pipeline::transcribe_file(&p.input, &p.options).await?))
+            Ok(json!(pipeline::transcribe_file(&p.input, &p.options, &notifier(out, id)).await?))
         }
-        "clips.find" => {
+        "run.create" => {
             #[derive(Deserialize)]
             struct P {
                 input: String,
                 #[serde(default)]
-                transcribe: TranscribeOptions,
-                #[serde(default)]
-                find: Option<scorer::FindOptions>,
+                options: pipeline::RunOptions,
             }
             let p: P = serde_json::from_value(params).map_err(invalid_params)?;
-            Ok(json!(pipeline::find_clips(&p.input, &p.transcribe, &p.find.unwrap_or_default()).await?))
+            Ok(json!(pipeline::create_run(&p.input, &p.options, &notifier(out, id)).await?))
         }
-        "models.list" => Ok(json!({ "whisper_cli": models::whisper_cli(), "models": models::status() })),
-        "models.install" => {
-            /// A model id from `models.list`, or "runtime" for whisper.cpp itself.
+        "run.get" => {
             #[derive(Deserialize)]
             struct P {
                 id: String,
             }
             let p: P = serde_json::from_value(params).map_err(invalid_params)?;
-            let (tx, request) = (out.clone(), id.clone());
-            let progress = move |pr: Progress| {
-                let _ = tx.send(json!({ "jsonrpc": "2.0", "method": "progress",
-                    "params": { "request": request, "stage": pr.stage, "done": pr.done, "total": pr.total } }));
-            };
-            let path = if p.id == "runtime" { models::install_runtime(&progress).await? } else { models::install(&p.id, &progress).await? };
-            Ok(json!({ "path": path }))
+            Ok(json!(pipeline::load_run(&p.id)?.0))
+        }
+        "run.render" => {
+            /// `ranks`: 1-based candidate ranks from `run.create`.
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+                ranks: Vec<usize>,
+                #[serde(default)]
+                options: render::RenderOptions,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(render::render_clips(&p.id, &p.ranks, &p.options, &notifier(out, id)).await?))
+        }
+        "models.list" => Ok(json!({ "whisper_cli": models::whisper_cli(), "models": models::status() })),
+        "models.install" => {
+            /// A model id from `models.list`, "runtime" (whisper.cpp), "yt-dlp" or "deno".
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!({ "path": tools::install_component(&p.id, &notifier(out, id)).await? }))
         }
         _ => Err(RpcError { code: -32601, message: format!("unknown method {method}") }),
     }

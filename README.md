@@ -45,8 +45,26 @@ Hindi models are converted once to ggml with whisper.cpp's converter, which need
 `auto` detects the language mid-stream: English → English model, otherwise Hinglish (then Hindi). Transcripts are
 cached in `%LOCALAPPDATA%\Clipingo\cache\transcripts`; pass `refresh` to redo one.
 
+### Workflow
+
+Create page: paste a file path or YouTube link → **Load** → language → **Find clips** → tick moments → format,
+dead-air and caption switches → **Render selected**. Same from the CLI:
+
 ```bash
-cargo run -p clip -- find "D:\streams\vod.mp4" hinglish
+cargo run -p clip -- run "https://www.youtube.com/watch?v=..." hinglish
+cargo run -p clip -- render <run-id> 1 2 3
+```
+
+Runs live in `%LOCALAPPDATA%\Clipingo\runs\<id>` (`run.json`, `transcript.json`, downloaded `source.mp4`,
+`clips\clip_NN_9x16.{mp4,srt,xml,ass}`). Rendering cuts dead air (pauses over 2 s, fillers), frames 9:16 as the
+whole picture over a blurred fill (face tracking comes with the face detector), burns word-highlight captions,
+normalizes loudness and encodes with the first working encoder (NVENC → QSV → AMF → MF → x264).
+
+### End-to-end tests
+
+```bash
+powershell -File tests/e2e/make-english-stream.ps1
+powershell -File tests/e2e/app-e2e.ps1 -Source "%TEMP%\clipingo-e2e\english-stream.mp4" -Language English
 ```
 
 ## clipd methods
@@ -59,5 +77,7 @@ cargo run -p clip -- find "D:\streams\vod.mp4" hinglish
 | `models.list` | — | whisper-cli path, models with installed state |
 | `models.install` | `{ id: english\|hinglish\|hindi\|runtime }` | `{ path }`; streams `progress` notifications `{request, stage, done, total}` first |
 | `transcript.run` | `{ input, options?: {language: auto\|english\|hindi\|hinglish, refresh} }` | words with times, model, language |
-| `clips.find` | `{ input, transcribe?, find? }` | source card, transcript summary, ranked candidates (transcript + loudness) |
+| `run.create` | `{ input, options?: {transcribe, find} }` file or YouTube link | saved run: source, media, transcript summary, ranked candidates; streams progress |
+| `run.get` | `{ id }` | a saved run |
+| `run.render` | `{ id, ranks: [1,2], options?: {format: vertical\|horizontal, cut_dead_air, captions} }` | per clip: `.mp4`, `.srt`, Premiere `.xml`, duration, dead air removed, encoder; streams progress |
 | `scorer.find` | `{ words: [{w,s,e}], options?: {min_len,max_len,count} }` | ranked clip candidates |

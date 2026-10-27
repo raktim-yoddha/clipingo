@@ -20,6 +20,19 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
+        // Unhandled XAML errors otherwise only show up as 0xc000027b in the event log.
+        UnhandledException += (_, e) =>
+        {
+            try
+            {
+                var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Clipingo", "logs");
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(Path.Combine(dir, "app.log"), $"{DateTime.Now:O} {e.Exception}\n\n");
+            }
+            catch (IOException)
+            {
+            }
+        };
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)

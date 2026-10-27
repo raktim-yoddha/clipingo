@@ -212,7 +212,7 @@ impl Default for FindOptions {
 }
 
 /// A proposed clip.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Candidate {
     pub start: f64,
     pub end: f64,

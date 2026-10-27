@@ -78,8 +78,10 @@ public sealed class CoreClient : IAsyncDisposable
             if (!await TryConnectAsync(5000, ct))
                 throw new CoreException("Could not reach clipd. Build it with `cargo build` or set CLIPINGO_CLIPD.");
         }
-        _reader = new StreamReader(_pipe!, new UTF8Encoding(false));
-        _writer = new StreamWriter(_pipe!, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
+        // leaveOpen: the pipe is disposed last, by us. Otherwise disposing the reader closes the pipe and the
+        // writer's dispose-time flush then throws ObjectDisposedException (crashed the app after every session).
+        _reader = new StreamReader(_pipe!, new UTF8Encoding(false), false, 4096, leaveOpen: true);
+        _writer = new StreamWriter(_pipe!, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
     }
 
     private async Task<bool> TryConnectAsync(int timeoutMs, CancellationToken ct)
@@ -124,11 +126,19 @@ public sealed class CoreClient : IAsyncDisposable
         return null;
     }
 
+    /// <summary>Cleanup only: a broken pipe (clipd died) must not throw from here.</summary>
     private void Disconnect()
     {
-        _reader?.Dispose();
-        _writer?.Dispose();
-        _pipe?.Dispose();
+        foreach (var d in new IDisposable?[] { _writer, _reader, _pipe })
+        {
+            try
+            {
+                d?.Dispose();
+            }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+            {
+            }
+        }
         (_reader, _writer, _pipe) = (null, null, null);
     }
 

@@ -1,19 +1,24 @@
-//! clip: command-line front end to the Clipingo core. Prints JSON.
+//! clip: command-line front end to the Clipingo core. Prints JSON; progress goes to stderr.
 
 use anyhow::{Context, Result, bail};
 use clipingo_core::models::{self, Progress};
+use clipingo_core::pipeline::{self, RunOptions};
+use clipingo_core::render::{self, Format, RenderOptions};
 use clipingo_core::transcribe::{Language, TranscribeOptions};
-use clipingo_core::{Word, pipeline, scorer, source, system};
+use clipingo_core::{Word, scorer, source, system, tools};
 
 const USAGE: &str = "usage:
   clip check                          tools, GPU, video encoders, speech models
   clip probe <file|url>               read a video file or YouTube link
-  clip score <words.json>             find clip candidates in a transcript ([{\"w\",\"s\",\"e\"}, …])
   clip transcribe <file> [lang] [refresh]
-  clip find <file> [lang] [refresh]   lang: auto (default) | en | hi | hinglish
+  clip run <file|url> [lang] [refresh]
+                                      download (links), transcribe, find clips; prints the saved run
+  clip render <run-id> <rank>... [horizontal] [keep-pauses] [no-captions]
+                                      render candidates (9:16 by default) + SRT + Premiere XML
+  clip score <words.json>             find clip candidates in a transcript ([{\"w\",\"s\",\"e\"}, …])
   clip models                         list local speech models
-  clip models install <id|runtime|all>
-                                      ids: english, hinglish, hindi; runtime = whisper.cpp";
+  clip models install <id|all>        english, hinglish, hindi, runtime (whisper.cpp), yt-dlp, deno
+  lang: auto (default) | en | hi | hinglish";
 
 fn transcribe_options(flags: &[&str]) -> Result<TranscribeOptions> {
     let mut opts = TranscribeOptions::default();
@@ -30,19 +35,42 @@ fn transcribe_options(flags: &[&str]) -> Result<TranscribeOptions> {
     Ok(opts)
 }
 
+fn render_options(flags: &[&str]) -> Result<(Vec<usize>, RenderOptions)> {
+    let mut opts = RenderOptions::default();
+    let mut ranks = Vec::new();
+    for &f in flags {
+        match f {
+            "horizontal" => opts.format = Format::Horizontal,
+            "vertical" => opts.format = Format::Vertical,
+            "keep-pauses" => opts.cut_dead_air = false,
+            "no-captions" => opts.captions = false,
+            n => ranks.push(n.parse().with_context(|| format!("not a rank or option: {n}\n{USAGE}"))?),
+        }
+    }
+    if ranks.is_empty() {
+        bail!("give at least one candidate rank\n{USAGE}");
+    }
+    Ok((ranks, opts))
+}
+
 fn print_progress(p: Progress) {
     match p.total {
+        Some(100) => eprint!("\r{}: {}%        ", p.stage, p.done),
         Some(t) if t > 0 => eprint!("\r{}: {:.0}% ({} / {} MB)   ", p.stage, p.done as f64 * 100.0 / t as f64, p.done >> 20, t >> 20),
-        _ => eprint!("\r{}…   ", p.stage),
+        _ => eprint!("\r{}…                    ", p.stage),
     }
 }
 
 async fn install(id: &str) -> Result<serde_json::Value> {
     let progress = |p: Progress| print_progress(p);
     let mut done = serde_json::Map::new();
-    let ids: Vec<&str> = if id == "all" { std::iter::once("runtime").chain(models::MODELS.iter().map(|m| m.id)).collect() } else { vec![id] };
+    let ids: Vec<&str> = if id == "all" {
+        ["runtime", "yt-dlp", "deno"].into_iter().chain(models::MODELS.iter().map(|m| m.id)).collect()
+    } else {
+        vec![id]
+    };
     for id in ids {
-        let path = if id == "runtime" { models::install_runtime(&progress).await? } else { models::install(id, &progress).await? };
+        let path = tools::install_component(id, &progress).await?;
         eprintln!();
         done.insert(id.to_string(), serde_json::json!(path));
     }
@@ -53,6 +81,7 @@ async fn install(id: &str) -> Result<serde_json::Value> {
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let progress = |p: Progress| print_progress(p);
     let out = match args.as_slice() {
         ["check"] => serde_json::to_value(system::check().await)?,
         ["probe", input] => serde_json::to_value(source::probe(input).await?)?,
@@ -61,14 +90,20 @@ async fn main() -> Result<()> {
             let words: Vec<Word> = serde_json::from_str(&text).context("transcript must be [{\"w\",\"s\",\"e\"}]")?;
             serde_json::to_value(scorer::find(&words, &scorer::FindOptions::default(), None))?
         }
-        ["transcribe", input, flags @ ..] => serde_json::to_value(pipeline::transcribe_file(input, &transcribe_options(flags)?).await?)?,
-        ["find", input, flags @ ..] => {
-            serde_json::to_value(pipeline::find_clips(input, &transcribe_options(flags)?, &scorer::FindOptions::default()).await?)?
+        ["transcribe", input, flags @ ..] => serde_json::to_value(pipeline::transcribe_file(input, &transcribe_options(flags)?, &progress).await?)?,
+        ["run", input, flags @ ..] => {
+            let opts = RunOptions { transcribe: transcribe_options(flags)?, find: None };
+            serde_json::to_value(pipeline::create_run(input, &opts, &progress).await?)?
+        }
+        ["render", run_id, flags @ ..] => {
+            let (ranks, opts) = render_options(flags)?;
+            serde_json::to_value(render::render_clips(run_id, &ranks, &opts, &progress).await?)?
         }
         ["models"] => serde_json::json!({ "whisper_cli": models::whisper_cli(), "models": models::status() }),
         ["models", "install", id] => install(id).await?,
         _ => bail!("{USAGE}"),
     };
+    eprintln!();
     println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())
 }

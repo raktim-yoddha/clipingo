@@ -2,12 +2,15 @@
 
 pub mod audio;
 pub mod camera;
+pub mod captions;
+pub mod render;
 pub mod models;
 pub mod pacing;
 pub mod pipeline;
 pub mod scorer;
 pub mod source;
 pub mod system;
+pub mod tools;
 pub mod transcribe;
 
 /// Per-user data folder (models, cache): `%LOCALAPPDATA%\Clipingo`, `~/Library/Application Support/Clipingo`,

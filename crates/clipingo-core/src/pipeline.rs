@@ -1,61 +1,130 @@
-//! Source → audio → transcript → clip candidates.
+//! Runs: source → (download) → audio → transcript → clip candidates, saved under `<data_dir>/runs/<id>`
+//! so clips can be rendered later without transcribing again.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 
+use crate::Word;
+use crate::models::{Progress, ProgressFn};
 use crate::scorer::{self, Candidate, FindOptions, Loudness};
 use crate::source::{self, SourceInfo, SourceKind};
 use crate::transcribe::{self, TranscribeOptions, Transcript, Workspace};
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptSummary {
     pub model: String,
     pub language: Option<String>,
     pub words: usize,
 }
 
-#[derive(Debug, serde::Serialize)]
-pub struct FindResult {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Run {
+    pub id: String,
+    pub dir: String,
+    /// What the user picked (YouTube metadata for links).
     pub source: SourceInfo,
+    /// Local video file the clips are cut from.
+    pub media: String,
+    pub media_info: SourceInfo,
     pub transcript: TranscriptSummary,
     pub candidates: Vec<Candidate>,
 }
 
-async fn local_source(input: &str) -> Result<SourceInfo> {
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RunOptions {
+    #[serde(default)]
+    pub transcribe: TranscribeOptions,
+    #[serde(default)]
+    pub find: Option<FindOptions>,
+}
+
+pub fn runs_dir() -> PathBuf {
+    crate::data_dir().join("runs")
+}
+
+fn new_run_id() -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    format!("{}-{:04x}", now.as_secs(), (now.subsec_nanos() ^ std::process::id()) & 0xffff)
+}
+
+fn stage(progress: ProgressFn<'_>, s: &str) {
+    progress(Progress { stage: s.into(), done: 0, total: None });
+}
+
+/// Transcript plus the loudness envelope, from one audio extraction.
+async fn transcribe_with_loudness(media: &Path, duration: Option<f64>, opts: &TranscribeOptions, progress: ProgressFn<'_>) -> Result<(Transcript, Vec<f32>)> {
+    let work = Workspace::new()?;
+    stage(progress, "Extracting audio");
+    let wav = crate::audio::extract_wav(media, &work.0.join("audio.wav")).await?;
+    let envelope = crate::audio::loudness_envelope(&wav)?;
+    let duration = duration.unwrap_or(envelope.len() as f64 / crate::audio::ENVELOPE_RATE);
+    let transcript = transcribe::transcribe(media, &wav, duration, opts, &work.0, progress).await?;
+    Ok((transcript, envelope))
+}
+
+async fn local_file(input: &str) -> Result<SourceInfo> {
     let info = source::probe(input).await?;
     if info.kind != SourceKind::File {
-        bail!("YouTube links need the download step, which is not built yet; download the VOD and pick the file");
+        bail!("expected a local file: {input}");
     }
     Ok(info)
 }
 
-/// Transcript plus the loudness envelope, from one audio extraction.
-async fn transcribe_with_loudness(info: &SourceInfo, opts: &TranscribeOptions) -> Result<(Transcript, Vec<f32>)> {
-    let work = Workspace::new()?;
-    let wav = crate::audio::extract_wav(Path::new(&info.input), &work.0.join("audio.wav")).await?;
-    let envelope = crate::audio::loudness_envelope(&wav)?;
-    let duration = info.duration_s.unwrap_or(envelope.len() as f64 / crate::audio::ENVELOPE_RATE);
-    let transcript = transcribe::transcribe(Path::new(&info.input), &wav, duration, opts, &work.0).await?;
-    Ok((transcript, envelope))
+pub async fn transcribe_file(input: &str, opts: &TranscribeOptions, progress: ProgressFn<'_>) -> Result<Transcript> {
+    let info = local_file(input).await?;
+    Ok(transcribe_with_loudness(Path::new(&info.input), info.duration_s, opts, progress).await?.0)
 }
 
-pub async fn transcribe_file(input: &str, opts: &TranscribeOptions) -> Result<Transcript> {
-    let info = local_source(input).await?;
-    Ok(transcribe_with_loudness(&info, opts).await?.0)
-}
+/// Download (for links), transcribe and score; the run is saved before returning.
+pub async fn create_run(input: &str, opts: &RunOptions, progress: ProgressFn<'_>) -> Result<Run> {
+    stage(progress, "Reading source");
+    let source = source::probe(input).await?;
+    let id = new_run_id();
+    let dir = runs_dir().join(&id);
+    std::fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
 
-pub async fn find_clips(input: &str, topts: &TranscribeOptions, fopts: &FindOptions) -> Result<FindResult> {
-    let info = local_source(input).await?;
-    let (transcript, envelope) = transcribe_with_loudness(&info, topts).await?;
+    let media_info = match source.kind {
+        SourceKind::File => source.clone(),
+        SourceKind::Youtube => {
+            let dest = dir.join("source.mp4");
+            source::download_youtube(&source.input, &dest, progress).await?;
+            local_file(&dest.to_string_lossy()).await?
+        }
+    };
+    let (mut transcript, envelope) = transcribe_with_loudness(Path::new(&media_info.input), media_info.duration_s, &opts.transcribe, progress).await?;
+    // Word segments swallow pauses; trim them to the audio so pacing and captions see the silences.
+    let quiet = crate::audio::silences(&envelope, crate::audio::ENVELOPE_RATE, 0.25);
+    crate::audio::refine_words(&mut transcript.words, &quiet);
     if transcript.words.is_empty() {
-        bail!("no speech found in {}", info.title);
+        bail!("no speech found in {}", source.title);
     }
+    stage(progress, "Finding moments");
     let loud = Loudness { rms: &envelope, rate: crate::audio::ENVELOPE_RATE };
-    let candidates = scorer::find(&transcript.words, fopts, Some(&loud));
-    Ok(FindResult {
+    let candidates = scorer::find(&transcript.words, &opts.find.clone().unwrap_or_default(), Some(&loud));
+
+    std::fs::write(dir.join("transcript.json"), serde_json::to_vec(&transcript.words)?)?;
+    let run = Run {
+        id,
+        dir: dir.to_string_lossy().into_owned(),
+        media: media_info.input.clone(),
+        source,
+        media_info,
         transcript: TranscriptSummary { model: transcript.model, language: transcript.language, words: transcript.words.len() },
-        source: info,
         candidates,
-    })
+    };
+    std::fs::write(dir.join("run.json"), serde_json::to_vec_pretty(&run)?)?;
+    Ok(run)
+}
+
+/// A saved run and its words. `id` must be a plain run id (no paths).
+pub fn load_run(id: &str) -> Result<(Run, Vec<Word>)> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        bail!("invalid run id");
+    }
+    let dir = runs_dir().join(id);
+    let run: Run = serde_json::from_slice(&std::fs::read(dir.join("run.json")).with_context(|| format!("run {id} not found"))?)?;
+    let words: Vec<Word> = serde_json::from_slice(&std::fs::read(dir.join("transcript.json"))?)?;
+    Ok((run, words))
 }

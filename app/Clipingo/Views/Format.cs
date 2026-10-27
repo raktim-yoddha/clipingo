@@ -17,4 +17,9 @@ public static class Format
     public static string EncoderState(bool works) => works ? "Works" : "Unavailable";
 
     public static string InstallName(string label) => $"Install {label}";
+
+    public static Visibility Has(string? text) => string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+
+    public static string ClipLine(double duration, double removed, string encoder) =>
+        $"  {duration:0.0}s" + (removed > 0.05 ? $", {removed:0.0}s dead air cut" : "") + $" · {encoder}";
 }
