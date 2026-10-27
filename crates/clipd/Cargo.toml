@@ -1,0 +1,12 @@
+[package]
+name = "clipd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+clipingo-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
