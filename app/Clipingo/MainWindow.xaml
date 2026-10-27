@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Window
+    x:Class="Clipingo.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Clipingo">
+    <Window.SystemBackdrop>
+        <DesktopAcrylicBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TitleBar x:Name="AppTitleBar" Title="Clipingo" Subtitle="Stream clipper">
+            <TitleBar.IconSource>
+                <ImageIconSource ImageSource="Assets/AppIcon.ico" />
+            </TitleBar.IconSource>
+        </TitleBar>
+
+        <NavigationView
+            x:Name="Nav"
+            Grid.Row="1"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="True"
+            PaneDisplayMode="Left"
+            SelectionChanged="Nav_SelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem
+                    x:Name="CreateItem"
+                    AutomationProperties.Name="Create clips"
+                    Content="Create"
+                    Tag="Create">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE714;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+            <Frame x:Name="ContentFrame" />
+        </NavigationView>
+    </Grid>
+</Window>
