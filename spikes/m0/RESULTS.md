@@ -12,13 +12,13 @@ Re-run any check with the script in its folder.
 | Same with `shaping=simple` | **Broken**: visible halants, wrong matra order — never use for Hindi |
 | `h264_qsv`, `h264_mf`, `libx264` | work |
 | `h264_amf` | unavailable (no AMD GPU — expected) |
-| `h264_nvenc` / `hevc_nvenc` / `av1_nvenc` | **fail**: "Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0" |
+| `h264_nvenc` / `hevc_nvenc` / `av1_nvenc` | driver 581.86: **fail** ("Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0"). After updating to driver **621.01: all three work**; core selects `h264_nvenc` |
 
 Decisions:
 - Caption burn-in always passes `shaping=complex`; `fontsdir` works without fontconfig (Windows font provider).
-- NVENC needs an NVIDIA driver that supports NVENC API 13.1, **or** an ffmpeg build against nv-codec-headers 13.0.
-  The core must probe encoders by actually opening them (like this script), not by `-encoders`, and fall back
-  NVENC → QSV → AMF → Media Foundation → libx264. System check should show "update GPU driver" when NVENC fails this way.
+- NVENC needs an NVIDIA driver that supports NVENC API 13.1 (581.86 does not, 621.01 does), **or** an ffmpeg build
+  against older nv-codec-headers. Done: the core probes encoders by actually opening them and falls back
+  NVENC → QSV → AMF → Media Foundation → libx264; System check shows "update your NVIDIA GPU driver" when NVENC fails this way.
 
 ## 2. Antigravity CLI headless visual check — `agy/check.ps1`
 
