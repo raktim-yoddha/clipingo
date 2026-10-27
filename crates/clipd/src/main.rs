@@ -2,7 +2,8 @@
 //! named pipe (Windows) or Unix socket (macOS/Linux). Every UI talks to this.
 
 use anyhow::Result;
-use clipingo_core::{Word, scorer, source, system};
+use clipingo_core::transcribe::TranscribeOptions;
+use clipingo_core::{Word, pipeline, scorer, source, system};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -51,6 +52,28 @@ async fn dispatch(method: &str, params: Value) -> Result<Value, RpcError> {
             }
             let p: P = serde_json::from_value(params).map_err(invalid_params)?;
             Ok(json!(scorer::find(&p.words, &p.options.unwrap_or_default(), None)))
+        }
+        "transcript.run" => {
+            #[derive(Deserialize)]
+            struct P {
+                input: String,
+                #[serde(default)]
+                options: TranscribeOptions,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(pipeline::transcribe_file(&p.input, &p.options).await?))
+        }
+        "clips.find" => {
+            #[derive(Deserialize)]
+            struct P {
+                input: String,
+                #[serde(default)]
+                transcribe: TranscribeOptions,
+                #[serde(default)]
+                find: Option<scorer::FindOptions>,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(pipeline::find_clips(&p.input, &p.transcribe, &p.find.unwrap_or_default()).await?))
         }
         _ => Err(RpcError { code: -32601, message: format!("unknown method {method}") }),
     }

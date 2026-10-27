@@ -36,6 +36,10 @@ pub struct SystemReport {
     pub encoders: Vec<EncoderStatus>,
     /// First working encoder: what renders will use.
     pub selected_encoder: Option<&'static str>,
+    /// ggml model whisper-cli will use for English, if one is installed.
+    pub whisper_model: Option<String>,
+    /// Whether a Sarvam API key is configured for Hindi / Hinglish (the key itself is never reported).
+    pub sarvam_key_set: bool,
 }
 
 /// Hardware first, CPU last.
@@ -139,7 +143,15 @@ pub async fn check() -> SystemReport {
         Vec::new()
     };
     let selected_encoder = select_encoder(&encoders);
-    SystemReport { os: std::env::consts::OS, tools, nvidia_gpus, encoders, selected_encoder }
+    SystemReport {
+        os: std::env::consts::OS,
+        tools,
+        nvidia_gpus,
+        encoders,
+        selected_encoder,
+        whisper_model: crate::transcribe::whisper_model().map(|p| p.to_string_lossy().into_owned()),
+        sarvam_key_set: crate::sarvam::api_key().is_some(),
+    }
 }
 
 /// First working encoder in fallback order.

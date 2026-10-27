@@ -1,10 +1,34 @@
 //! Clipingo headless core: everything the UIs and the CLI share.
 
+pub mod audio;
 pub mod camera;
 pub mod pacing;
+pub mod pipeline;
+pub mod sarvam;
 pub mod scorer;
 pub mod source;
 pub mod system;
+pub mod transcribe;
+
+/// Per-user data folder (models, cache): `%LOCALAPPDATA%\Clipingo`, `~/Library/Application Support/Clipingo`,
+/// or `$XDG_DATA_HOME/clipingo`. `CLIPINGO_DATA_DIR` overrides.
+pub fn data_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if let Some(dir) = env("CLIPINGO_DATA_DIR") {
+        return dir;
+    }
+    if cfg!(windows) {
+        env("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("Clipingo")
+    } else if cfg!(target_os = "macos") {
+        env("HOME").unwrap_or_else(std::env::temp_dir).join("Library/Application Support/Clipingo")
+    } else {
+        env("XDG_DATA_HOME")
+            .or_else(|| env("HOME").map(|h| h.join(".local/share")))
+            .unwrap_or_else(std::env::temp_dir)
+            .join("clipingo")
+    }
+}
 
 /// One transcribed word, times in seconds on the source timeline.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
