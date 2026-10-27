@@ -1,4 +1,4 @@
-//! Transcription: Sarvam Saaras v3 for Hindi / Hinglish, whisper.cpp for English, cached per source.
+//! Transcription, fully local: whisper.cpp with one model per language (see `models`), cached per source.
 
 use std::path::{Path, PathBuf};
 
@@ -6,133 +6,57 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-use crate::{Word, sarvam};
+use crate::Word;
+use crate::models::{self, ModelSpec};
 
-/// What the user said the stream is in.
+/// What the stream is in; picks the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {
-    /// Detect with whisper when available; otherwise let Sarvam detect.
+    /// Detect mid-stream: English → English model, otherwise Hinglish (falls back to Hindi).
     #[default]
     Auto,
     English,
     /// Hindi in Devanagari.
     Hindi,
-    /// Hindi-English code-mixed speech, transcribed as spoken.
+    /// Hindi-English code-mixed speech in Roman script.
     Hinglish,
-}
-
-/// Caption script for Hindi / Hinglish.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Script {
-    /// As spoken: Devanagari for Hindi words, Latin for English words.
-    #[default]
-    Native,
-    /// Everything in Roman letters (Sarvam `translit`).
-    Roman,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TranscribeOptions {
     #[serde(default)]
     pub language: Language,
-    #[serde(default)]
-    pub script: Script,
-    /// Ignore the cache and transcribe again (costs Sarvam credit).
+    /// Ignore the cache and transcribe again.
     #[serde(default)]
     pub refresh: bool,
 }
 
-/// How trustworthy word start/end times are.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum WordTiming {
-    /// From the model (whisper word segments).
-    Model,
-    /// Spread across Sarvam's phrase timestamps by word length.
-    Estimated,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transcript {
-    /// "whisper.cpp" or "sarvam:saaras:v3:<mode>".
-    pub engine: String,
-    /// Detected or requested language code, e.g. "en", "hi-IN".
+    /// Model id from `models::MODELS`, e.g. "hinglish".
+    pub model: String,
+    /// Language code whisper decoded with or detected.
     pub language: Option<String>,
-    pub word_timing: WordTiming,
     pub words: Vec<Word>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Engine {
-    Whisper,
-    Sarvam,
-}
-
-/// Which engine handles a request, given what is installed / configured.
-pub fn route(language: Language, detected: Option<&str>, whisper_ready: bool, sarvam_ready: bool) -> Result<Engine> {
-    let want = match language {
-        Language::English => Engine::Whisper,
-        Language::Hindi | Language::Hinglish => Engine::Sarvam,
-        Language::Auto => match detected {
-            Some(code) if code.starts_with("en") => Engine::Whisper,
-            Some(_) => Engine::Sarvam,
-            None if sarvam_ready => Engine::Sarvam,
-            None => Engine::Whisper,
-        },
+/// Which model handles a request, given what is installed. `detected` is whisper's language code.
+pub fn route(language: Language, detected: Option<&str>, installed: &dyn Fn(Language) -> bool) -> Result<Language> {
+    let wanted = match (language, detected) {
+        (Language::Auto, Some(code)) if code.starts_with("en") => vec![Language::English],
+        (Language::Auto, _) => vec![Language::Hinglish, Language::Hindi, Language::English],
+        (other, _) => vec![other],
     };
-    match (want, whisper_ready, sarvam_ready) {
-        (Engine::Whisper, true, _) | (Engine::Sarvam, _, true) => Ok(want),
-        // English still works through Sarvam (en-IN) when whisper is not set up.
-        (Engine::Whisper, false, true) => Ok(Engine::Sarvam),
-        (Engine::Sarvam, _, false) => bail!(
-            "Hindi/Hinglish transcription uses Sarvam Saaras v3: set the SARVAM_API_KEY environment variable"
-        ),
-        (Engine::Whisper, false, false) => bail!(
-            "English transcription needs whisper-cli on PATH and a model: put ggml-large-v3-turbo.bin in {} or set CLIPINGO_WHISPER_MODEL",
-            crate::data_dir().join("models").display()
-        ),
-    }
+    wanted.iter().copied().find(|&l| installed(l)).ok_or_else(|| {
+        let missing = models::for_language(wanted[0]).map_or("a speech model", |m| m.label);
+        anyhow::anyhow!("{missing} is not installed: Settings → Speech models, or `clip models install {}`", models::for_language(wanted[0]).map_or("all", |m| m.id))
+    })
 }
 
-/// Sarvam mode for a request: `verbatim` keeps fillers so pacing can cut them.
-pub fn sarvam_mode(language: Language, script: Script) -> &'static str {
-    match (language, script) {
-        (_, Script::Roman) => "translit",
-        (Language::Hinglish | Language::Auto, Script::Native) => "codemix",
-        _ => "verbatim",
-    }
-}
-
-// ---------------------------------------------------------------- whisper.cpp
-
-/// The ggml model to use: CLIPINGO_WHISPER_MODEL, else large-v3-turbo, else any ggml model in the models folder.
-pub fn whisper_model() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("CLIPINGO_WHISPER_MODEL").map(PathBuf::from).filter(|p| p.is_file()) {
-        return Some(p);
-    }
-    let dir = crate::data_dir().join("models");
-    let preferred = dir.join("ggml-large-v3-turbo.bin");
-    if preferred.is_file() {
-        return Some(preferred);
-    }
-    let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .ok()?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("ggml-") && n.ends_with(".bin")))
-        .collect();
-    found.sort();
-    found.pop()
-}
-
-async fn whisper_cli_present() -> bool {
-    Command::new("whisper-cli").arg("--help").kill_on_drop(true).output().await.is_ok()
-}
-
-async fn run_whisper(model: &Path, wav: &Path, extra: &[&str]) -> Result<std::process::Output> {
+async fn run_whisper(cli: &Path, model: &Path, wav: &Path, extra: &[&str]) -> Result<std::process::Output> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8).to_string();
-    let out = Command::new("whisper-cli")
+    let out = Command::new(cli)
         .arg("-m")
         .arg(model)
         .arg("-f")
@@ -150,21 +74,22 @@ async fn run_whisper(model: &Path, wav: &Path, extra: &[&str]) -> Result<std::pr
     Ok(out)
 }
 
-/// Language code whisper hears at `at_ms` (sampled mid-stream; intros are often music or silence).
-async fn whisper_detect(model: &Path, wav: &Path, at_ms: u64) -> Result<Option<String>> {
-    let out = run_whisper(model, wav, &["-dl", "-l", "auto", "-ot", &at_ms.to_string()]).await?;
-    // whisper prints e.g. "auto-detected language: hi (p = 0.912)" on stderr.
+/// Language whisper hears at `at_ms` (sampled mid-stream; intros are often music or silence).
+async fn detect_language(cli: &Path, model: &Path, wav: &Path, at_ms: u64) -> Option<String> {
+    let out = run_whisper(cli, model, wav, &["-dl", "-l", "auto", "-ot", &at_ms.to_string()]).await.ok()?;
+    // whisper prints e.g. "auto-detected language: hi (p = 0.912)".
     let text = String::from_utf8_lossy(&out.stderr).into_owned() + &String::from_utf8_lossy(&out.stdout);
-    Ok(text.lines().find_map(|l| l.split("auto-detected language:").nth(1)).and_then(|r| r.split_whitespace().next()).map(str::to_string))
+    text.lines().find_map(|l| l.split("auto-detected language:").nth(1)).and_then(|r| r.split_whitespace().next()).map(str::to_string)
 }
 
-async fn whisper_transcribe(model: &Path, wav: &Path, language: &str, work: &Path) -> Result<Transcript> {
+async fn whisper_transcribe(cli: &Path, spec: &ModelSpec, model: &Path, wav: &Path, work: &Path) -> Result<Transcript> {
     let base = work.join("whisper");
     let base_s = base.to_string_lossy();
-    // -ml 1 -sow: one segment per word with its own start/end (whisper.cpp's word-level mode).
-    run_whisper(model, wav, &["-l", language, "-ml", "1", "-sow", "-sns", "-oj", "-of", &base_s]).await?;
+    // -ml 1 -sow: one segment per word with its own start/end (whisper.cpp word-level mode).
+    run_whisper(cli, model, wav, &["-l", spec.whisper_lang, "-ml", "1", "-sow", "-sns", "-oj", "-of", &base_s]).await?;
     let json = std::fs::read_to_string(base.with_extension("json")).context("whisper-cli wrote no JSON")?;
-    parse_whisper_json(&json)
+    let (words, language) = parse_whisper_json(&json)?;
+    Ok(Transcript { model: spec.id.to_string(), language: language.or(Some(spec.whisper_lang.to_string())), words })
 }
 
 #[derive(Deserialize)]
@@ -189,7 +114,7 @@ struct WhisperOffsets {
 }
 
 /// whisper-cli `-oj` output (offsets in ms) → words; punctuation-only segments join the previous word.
-pub fn parse_whisper_json(json: &str) -> Result<Transcript> {
+pub fn parse_whisper_json(json: &str) -> Result<(Vec<Word>, Option<String>)> {
     let parsed: WhisperJson = serde_json::from_str(json).context("unexpected whisper JSON")?;
     let mut words: Vec<Word> = Vec::new();
     for seg in parsed.transcription {
@@ -207,22 +132,15 @@ pub fn parse_whisper_json(json: &str) -> Result<Transcript> {
             _ => words.push(Word { text: text.to_string(), start, end }),
         }
     }
-    Ok(Transcript {
-        engine: "whisper.cpp".into(),
-        language: parsed.result.and_then(|r| r.language),
-        word_timing: WordTiming::Model,
-        words,
-    })
+    Ok((words, parsed.result.and_then(|r| r.language)))
 }
 
-// ---------------------------------------------------------------- cache + entry point
-
-fn cache_path(input: &Path, engine_key: &str) -> Option<PathBuf> {
+fn cache_path(input: &Path, model_file: &str) -> Option<PathBuf> {
     use std::hash::{Hash, Hasher};
     let meta = std::fs::metadata(input).ok()?;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     // ponytail: SipHash key is only stable per toolchain; a toolchain change just means a cache miss.
-    (input.canonicalize().ok()?, meta.len(), meta.modified().ok()?, engine_key).hash(&mut h);
+    (input.canonicalize().ok()?, meta.len(), meta.modified().ok()?, model_file).hash(&mut h);
     Some(crate::data_dir().join("cache").join("transcripts").join(format!("{:016x}.json", h.finish())))
 }
 
@@ -242,45 +160,27 @@ impl Drop for Workspace {
     }
 }
 
-/// Transcribe `input` (already-extracted 16 kHz `wav`), routing by language and reusing cached results.
+/// Transcribe `input` (already-extracted 16 kHz `wav`), picking the model by language and reusing cached results.
 pub async fn transcribe(input: &Path, wav: &Path, duration_s: f64, opts: &TranscribeOptions, work: &Path) -> Result<Transcript> {
-    let model = whisper_model();
-    let whisper_ready = model.is_some() && whisper_cli_present().await;
-    let sarvam_key = sarvam::api_key();
+    let cli = models::whisper_cli().context("whisper.cpp is not installed: Settings → Speech models, or `clip models install runtime`")?;
+    let installed = |l: Language| models::for_language(l).and_then(models::installed).is_some();
 
-    let detected = match (opts.language, &model, whisper_ready) {
-        (Language::Auto, Some(m), true) => whisper_detect(m, wav, (duration_s * 500.0) as u64).await.ok().flatten(),
+    // Detection uses the stock multilingual English model (fine-tunes lose language ID).
+    let detected = match (opts.language, models::for_language(Language::English).and_then(models::installed)) {
+        (Language::Auto, Some(detector)) => detect_language(&cli, &detector, wav, (duration_s * 500.0) as u64).await,
         _ => None,
     };
-    let engine = route(opts.language, detected.as_deref(), whisper_ready, sarvam_key.is_some())?;
-    let mode = sarvam_mode(opts.language, opts.script);
-    let engine_key = match engine {
-        Engine::Whisper => format!("whisper:{}", model.as_ref().and_then(|m| m.file_name()).map(|n| n.to_string_lossy()).unwrap_or_default()),
-        Engine::Sarvam => format!("sarvam:saaras:v3:{mode}"),
-    };
+    let language = route(opts.language, detected.as_deref(), &installed)?;
+    let spec = models::for_language(language).expect("every language has a model");
+    let model = models::installed(spec).expect("routed to an installed model");
 
-    let cache = cache_path(input, &engine_key);
+    let cache = cache_path(input, spec.file);
     if !opts.refresh
         && let Some(t) = cache.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok())
     {
         return Ok(t);
     }
-
-    let transcript = match engine {
-        Engine::Whisper => {
-            let lang = detected.as_deref().filter(|_| opts.language == Language::Auto).unwrap_or("en");
-            whisper_transcribe(model.as_ref().expect("routed to whisper"), wav, lang, work).await?
-        }
-        Engine::Sarvam => {
-            let code = match opts.language {
-                Language::Auto => "unknown",
-                Language::English => "en-IN",
-                Language::Hindi | Language::Hinglish => "hi-IN",
-            };
-            let key = sarvam_key.expect("routed to sarvam");
-            sarvam::transcribe(&key, wav, duration_s, code, mode, work).await?
-        }
-    };
+    let transcript = whisper_transcribe(&cli, spec, &model, wav, work).await?;
     if let Some(p) = cache {
         if let Some(dir) = p.parent() {
             std::fs::create_dir_all(dir).ok();
@@ -295,22 +195,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn routes_by_language_and_availability() {
-        assert_eq!(route(Language::English, None, true, true).unwrap(), Engine::Whisper);
-        assert_eq!(route(Language::Hinglish, None, true, true).unwrap(), Engine::Sarvam);
-        assert_eq!(route(Language::Auto, Some("en"), true, true).unwrap(), Engine::Whisper);
-        assert_eq!(route(Language::Auto, Some("hi"), true, true).unwrap(), Engine::Sarvam);
-        assert_eq!(route(Language::Auto, None, false, true).unwrap(), Engine::Sarvam);
-        assert_eq!(route(Language::English, None, false, true).unwrap(), Engine::Sarvam, "English falls back to Sarvam en-IN");
-        assert!(route(Language::Hindi, None, true, false).unwrap_err().to_string().contains("SARVAM_API_KEY"));
-        assert!(route(Language::Auto, None, false, false).is_err());
-    }
-
-    #[test]
-    fn sarvam_modes() {
-        assert_eq!(sarvam_mode(Language::Hinglish, Script::Native), "codemix");
-        assert_eq!(sarvam_mode(Language::Hinglish, Script::Roman), "translit");
-        assert_eq!(sarvam_mode(Language::Hindi, Script::Native), "verbatim");
+    fn routes_by_language_and_what_is_installed() {
+        let all = |_: Language| true;
+        let only = |x: Language| move |l: Language| l == x;
+        assert_eq!(route(Language::English, None, &all).unwrap(), Language::English);
+        assert_eq!(route(Language::Hindi, None, &all).unwrap(), Language::Hindi);
+        assert_eq!(route(Language::Auto, Some("en"), &all).unwrap(), Language::English);
+        assert_eq!(route(Language::Auto, Some("hi"), &all).unwrap(), Language::Hinglish);
+        assert_eq!(route(Language::Auto, Some("hi"), &only(Language::Hindi)).unwrap(), Language::Hindi);
+        assert_eq!(route(Language::Auto, None, &only(Language::English)).unwrap(), Language::English);
+        let err = route(Language::Hinglish, None, &only(Language::English)).unwrap_err().to_string();
+        assert!(err.contains("Hinglish") && err.contains("install hinglish"), "{err}");
     }
 
     #[test]
@@ -322,10 +217,10 @@ mod tests {
             {"offsets":{"from":690,"to":700},"text":","},
             {"offsets":{"from":800,"to":1200},"text":" [BLANK_AUDIO]"},
             {"offsets":{"from":1200,"to":1500},"text":" yes"}]}"#;
-        let t = parse_whisper_json(json).unwrap();
-        assert_eq!(t.language.as_deref(), Some("en"));
-        let texts: Vec<_> = t.words.iter().map(|w| w.text.as_str()).collect();
+        let (words, lang) = parse_whisper_json(json).unwrap();
+        assert_eq!(lang.as_deref(), Some("en"));
+        let texts: Vec<_> = words.iter().map(|w| w.text.as_str()).collect();
         assert_eq!(texts, ["And", "so,", "yes"]);
-        assert!((t.words[1].end - 0.7).abs() < 1e-9 && (t.words[0].start - 0.32).abs() < 1e-9);
+        assert!((words[1].end - 0.7).abs() < 1e-9 && (words[0].start - 0.32).abs() < 1e-9);
     }
 }

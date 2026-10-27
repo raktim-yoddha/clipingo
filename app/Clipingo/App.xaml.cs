@@ -10,6 +10,7 @@ public partial class App : Application
     /// <summary>Composition root; pages resolve their view models here.</summary>
     public static IServiceProvider Services { get; } = new ServiceCollection()
         .AddSingleton<CoreClient>()
+        .AddSingleton<Func<CoreClient>>(() => new CoreClient())
         .AddTransient<CreateViewModel>()
         .AddTransient<SettingsViewModel>()
         .BuildServiceProvider();

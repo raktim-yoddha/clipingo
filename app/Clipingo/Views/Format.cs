@@ -15,4 +15,6 @@ public static class Format
     public static string ToolState(bool found, bool required) => found ? "Installed" : required ? "Missing (required)" : "Missing (optional)";
 
     public static string EncoderState(bool works) => works ? "Works" : "Unavailable";
+
+    public static string InstallName(string label) => $"Install {label}";
 }

@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Clipingo.Models"
     xmlns:views="using:Clipingo.Views"
+    xmlns:vm="using:Clipingo.ViewModels"
     Background="Transparent">
 
     <!--  Short, fixed lists: ItemsControl inside one ScrollViewer instead of nested scrolling ListViews.  -->
@@ -46,6 +47,74 @@
                 IsOpen="{x:Bind ViewModel.HasDriverHint, Mode=OneWay}"
                 Message="{x:Bind ViewModel.DriverHint, Mode=OneWay}"
                 Severity="Warning" />
+
+            <TextBlock Margin="0,12,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Speech models (local, no cloud)" />
+            <ItemsControl AutomationProperties.Name="Speech models" ItemsSource="{x:Bind ViewModel.SpeechModels}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SpeechModelItem">
+                        <Grid Padding="0,8" ColumnSpacing="12" RowSpacing="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <FontIcon
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                Glyph="&#xE73E;"
+                                Visibility="{x:Bind Installed, Mode=OneWay}" />
+                            <FontIcon
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Glyph="&#xE896;"
+                                Visibility="{x:Bind views:Format.Not(Installed), Mode=OneWay}" />
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Label}" />
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="{x:Bind Detail}"
+                                    TextTrimming="CharacterEllipsis" />
+                                <TextBlock
+                                    Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                    Text="{x:Bind ErrorMessage, Mode=OneWay}"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button
+                                Grid.Column="2"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="{x:Bind views:Format.InstallName(Label)}"
+                                Command="{x:Bind InstallCommand}"
+                                Content="Install"
+                                Visibility="{x:Bind CanInstall, Mode=OneWay}" />
+                            <TextBlock
+                                Grid.Column="2"
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="{x:Bind StateText, Mode=OneWay}"
+                                Visibility="{x:Bind Installed, Mode=OneWay}" />
+                            <StackPanel
+                                Grid.Row="1"
+                                Grid.Column="1"
+                                Grid.ColumnSpan="2"
+                                Spacing="2"
+                                Visibility="{x:Bind InstallCommand.IsRunning, Mode=OneWay}">
+                                <ProgressBar
+                                    IsIndeterminate="{x:Bind IsIndeterminate, Mode=OneWay}"
+                                    Maximum="100"
+                                    Value="{x:Bind ProgressValue, Mode=OneWay}" />
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    Text="{x:Bind ProgressText, Mode=OneWay}"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
 
             <TextBlock Margin="0,12,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Tools" />
             <ItemsControl AutomationProperties.Name="Tools" ItemsSource="{x:Bind ViewModel.Tools}">

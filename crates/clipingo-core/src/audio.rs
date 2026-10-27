@@ -33,14 +33,6 @@ pub async fn extract_wav(input: &Path, out: &Path) -> Result<PathBuf> {
     Ok(out.to_path_buf())
 }
 
-/// 64 kbps mono MP3 slice `[start_s, start_s + dur_s)` for upload (a 2 h slice is ~58 MB instead of ~230 MB WAV).
-pub async fn extract_mp3_slice(wav: &Path, start_s: f64, dur_s: f64, out: &Path) -> Result<PathBuf> {
-    let (i, o) = (wav.to_string_lossy(), out.to_string_lossy());
-    let (ss, t) = (format!("{start_s:.3}"), format!("{dur_s:.3}"));
-    ffmpeg(&["-ss", &ss, "-t", &t, "-i", &i, "-c:a", "libmp3lame", "-b:a", "64k", &o], "audio slicing").await?;
-    Ok(out.to_path_buf())
-}
-
 /// Byte range of the PCM samples in a RIFF/WAVE file (walks chunks; ffmpeg may add LIST before data).
 fn wav_data_range(header: &[u8]) -> Option<(usize, usize)> {
     if header.len() < 12 || &header[..4] != b"RIFF" || &header[8..12] != b"WAVE" {

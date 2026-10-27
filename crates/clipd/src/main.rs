@@ -1,12 +1,15 @@
 //! clipd: the Clipingo daemon. JSON-RPC 2.0, one JSON object per line, over a
 //! named pipe (Windows) or Unix socket (macOS/Linux). Every UI talks to this.
+//! Long calls stream `{"method":"progress","params":{"request":<id>,…}}` notifications before their reply.
 
 use anyhow::Result;
+use clipingo_core::models::{self, Progress};
 use clipingo_core::transcribe::TranscribeOptions;
 use clipingo_core::{Word, pipeline, scorer, source, system};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Deserialize)]
 struct Request {
@@ -31,7 +34,7 @@ fn invalid_params(e: serde_json::Error) -> RpcError {
     RpcError { code: -32602, message: e.to_string() }
 }
 
-async fn dispatch(method: &str, params: Value) -> Result<Value, RpcError> {
+async fn dispatch(method: &str, params: Value, id: &Value, out: &UnboundedSender<Value>) -> Result<Value, RpcError> {
     match method {
         "version" => Ok(json!({ "version": env!("CARGO_PKG_VERSION") })),
         "system.check" => Ok(json!(system::check().await)),
@@ -75,36 +78,63 @@ async fn dispatch(method: &str, params: Value) -> Result<Value, RpcError> {
             let p: P = serde_json::from_value(params).map_err(invalid_params)?;
             Ok(json!(pipeline::find_clips(&p.input, &p.transcribe, &p.find.unwrap_or_default()).await?))
         }
+        "models.list" => Ok(json!({ "whisper_cli": models::whisper_cli(), "models": models::status() })),
+        "models.install" => {
+            /// A model id from `models.list`, or "runtime" for whisper.cpp itself.
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            let (tx, request) = (out.clone(), id.clone());
+            let progress = move |pr: Progress| {
+                let _ = tx.send(json!({ "jsonrpc": "2.0", "method": "progress",
+                    "params": { "request": request, "stage": pr.stage, "done": pr.done, "total": pr.total } }));
+            };
+            let path = if p.id == "runtime" { models::install_runtime(&progress).await? } else { models::install(&p.id, &progress).await? };
+            Ok(json!({ "path": path }))
+        }
         _ => Err(RpcError { code: -32601, message: format!("unknown method {method}") }),
     }
 }
 
-async fn respond(line: &str) -> Option<Value> {
+async fn respond(line: &str, out: &UnboundedSender<Value>) -> Option<Value> {
     let req: Request = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(e) => return Some(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": e.to_string() } })),
     };
-    let result = dispatch(&req.method, req.params).await;
-    let id = req.id?; // notifications get no reply
+    let id = req.id.clone().unwrap_or(Value::Null);
+    let result = dispatch(&req.method, req.params, &id, out).await;
+    req.id?; // notifications get no reply
     Some(match result {
         Ok(v) => json!({ "jsonrpc": "2.0", "id": id, "result": v }),
         Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": e.code, "message": e.message } }),
     })
 }
 
-async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S) -> Result<()> {
+async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S) -> Result<()> {
     let (read, mut write) = tokio::io::split(stream);
+    // One writer keeps progress notifications and replies in order on the wire.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    let writer = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            let mut bytes = serde_json::to_vec(&msg)?;
+            bytes.push(b'\n');
+            write.write_all(&bytes).await?;
+        }
+        anyhow::Ok(())
+    });
     let mut lines = BufReader::new(read).lines();
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
             continue;
         }
-        if let Some(reply) = respond(&line).await {
-            let mut out = serde_json::to_vec(&reply)?;
-            out.push(b'\n');
-            write.write_all(&out).await?;
+        if let Some(reply) = respond(&line, &tx).await {
+            let _ = tx.send(reply);
         }
     }
+    drop(tx);
+    writer.await??;
     Ok(())
 }
 
@@ -151,13 +181,16 @@ mod tests {
 
     #[tokio::test]
     async fn answers_requests_and_errors_in_jsonrpc_shape() {
-        let ok = respond(r#"{"jsonrpc":"2.0","id":1,"method":"version"}"#).await.unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let ok = respond(r#"{"jsonrpc":"2.0","id":1,"method":"version"}"#, &tx).await.unwrap();
         assert_eq!(ok["result"]["version"], env!("CARGO_PKG_VERSION"));
-        let unknown = respond(r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#).await.unwrap();
+        let unknown = respond(r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#, &tx).await.unwrap();
         assert_eq!(unknown["error"]["code"], -32601);
-        let bad = respond(r#"{"jsonrpc":"2.0","id":3,"method":"source.probe","params":{}}"#).await.unwrap();
+        let bad = respond(r#"{"jsonrpc":"2.0","id":3,"method":"source.probe","params":{}}"#, &tx).await.unwrap();
         assert_eq!(bad["error"]["code"], -32602);
-        assert!(respond(r#"{"jsonrpc":"2.0","method":"version"}"#).await.is_none());
-        assert_eq!(respond("not json").await.unwrap()["error"]["code"], -32700);
+        assert!(respond(r#"{"jsonrpc":"2.0","method":"version"}"#, &tx).await.is_none());
+        assert_eq!(respond("not json", &tx).await.unwrap()["error"]["code"], -32700);
+        let unknown_model = respond(r#"{"jsonrpc":"2.0","id":4,"method":"models.install","params":{"id":"klingon"}}"#, &tx).await.unwrap();
+        assert!(unknown_model["error"]["message"].as_str().unwrap().contains("unknown model"));
     }
 }

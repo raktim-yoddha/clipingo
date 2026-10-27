@@ -6,13 +6,12 @@ use anyhow::{Result, bail};
 
 use crate::scorer::{self, Candidate, FindOptions, Loudness};
 use crate::source::{self, SourceInfo, SourceKind};
-use crate::transcribe::{self, TranscribeOptions, Transcript, WordTiming, Workspace};
+use crate::transcribe::{self, TranscribeOptions, Transcript, Workspace};
 
 #[derive(Debug, serde::Serialize)]
 pub struct TranscriptSummary {
-    pub engine: String,
+    pub model: String,
     pub language: Option<String>,
-    pub word_timing: WordTiming,
     pub words: usize,
 }
 
@@ -55,12 +54,7 @@ pub async fn find_clips(input: &str, topts: &TranscribeOptions, fopts: &FindOpti
     let loud = Loudness { rms: &envelope, rate: crate::audio::ENVELOPE_RATE };
     let candidates = scorer::find(&transcript.words, fopts, Some(&loud));
     Ok(FindResult {
-        transcript: TranscriptSummary {
-            engine: transcript.engine,
-            language: transcript.language,
-            word_timing: transcript.word_timing,
-            words: transcript.words.len(),
-        },
+        transcript: TranscriptSummary { model: transcript.model, language: transcript.language, words: transcript.words.len() },
         source: info,
         candidates,
     })

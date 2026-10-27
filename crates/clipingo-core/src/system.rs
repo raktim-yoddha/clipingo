@@ -36,10 +36,10 @@ pub struct SystemReport {
     pub encoders: Vec<EncoderStatus>,
     /// First working encoder: what renders will use.
     pub selected_encoder: Option<&'static str>,
-    /// ggml model whisper-cli will use for English, if one is installed.
-    pub whisper_model: Option<String>,
-    /// Whether a Sarvam API key is configured for Hindi / Hinglish (the key itself is never reported).
-    pub sarvam_key_set: bool,
+    /// whisper-cli used for transcription, if installed.
+    pub whisper_cli: Option<String>,
+    /// Local speech models (English, Hinglish, Hindi) and whether each is installed.
+    pub speech_models: Vec<crate::models::ModelStatus>,
 }
 
 /// Hardware first, CPU last.
@@ -108,7 +108,7 @@ const TOOLS: &[(&str, &str, &str, bool)] = &[
     ("ffprobe", "-version", "Read media duration and streams", true),
     ("yt-dlp", "--version", "Download YouTube streams", true),
     ("deno", "--version", "YouTube challenge solver for yt-dlp", true),
-    ("whisper-cli", "--help", "Local speech recognition (English, offline)", false),
+    ("uv", "--version", "One-time conversion of the Hindi / Hinglish speech models", false),
     ("llama-server", "--version", "Local LLM / vision judge", false),
     ("agy", "--version", "Antigravity CLI visual checks", false),
 ];
@@ -149,8 +149,8 @@ pub async fn check() -> SystemReport {
         nvidia_gpus,
         encoders,
         selected_encoder,
-        whisper_model: crate::transcribe::whisper_model().map(|p| p.to_string_lossy().into_owned()),
-        sarvam_key_set: crate::sarvam::api_key().is_some(),
+        whisper_cli: crate::models::whisper_cli().map(|p| p.to_string_lossy().into_owned()),
+        speech_models: crate::models::status(),
     }
 }
 

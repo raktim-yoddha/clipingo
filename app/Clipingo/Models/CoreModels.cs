@@ -20,9 +20,13 @@ public sealed record ToolStatus(string Name, string Purpose, bool Required, bool
 
 public sealed record EncoderStatus(string Name, string Label, bool Works, string? Error, string? Hint);
 
+public sealed record ModelStatus(string Id, string Label, string Language, bool Installed, string? Path, int DownloadMb, bool NeedsConversion);
+
 public sealed record SystemReport(
     string Os,
     IReadOnlyList<ToolStatus> Tools,
     IReadOnlyList<string> NvidiaGpus,
     IReadOnlyList<EncoderStatus> Encoders,
-    string? SelectedEncoder);
+    string? SelectedEncoder,
+    string? WhisperCli,
+    IReadOnlyList<ModelStatus> SpeechModels);

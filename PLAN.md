@@ -29,7 +29,7 @@ Premiere panel (UXP / CEP) ──WebSocket────────┤
   so the Windows app uses JSON-RPC, not UniFFI.
 - Separate daemon process: a crashing model or FFmpeg never takes the UI down. BridgeClip uses the same split
   (Electron main → Python worker over JSON lines, one job at a time); we allow 2 parallel jobs like its Jobs page.
-- **No Python at runtime**: every local model is ONNX, GGUF or a native lib; Hindi/Hinglish ASR calls the Sarvam API (§6). (BridgeClip needs Python + OpenCV; Clippo
+- **No Python at runtime**: every model is local ONNX, GGUF or ggml on a native lib; no API-based models (§6). (BridgeClip needs Python + OpenCV; Clippo
   needs a browser.)
 
 ### Hardware (any GPU; Windows + macOS)
@@ -99,8 +99,7 @@ unload models, so small GPUs work.
 ### 2.4 Signals for hype
 | Signal | Method |
 |---|---|
-| Transcript HI / Hinglish | Sarvam Saaras v3 batch API (`codemix` / `translit` / `verbatim`), chunk timestamps + local forced alignment for word times (§6) |
-| Transcript EN / offline fallback | whisper.cpp; word times via `-ml 1` (marked experimental) or `--dtw` token timestamps; `--prompt` + `--carry-initial-prompt` for custom vocabulary; `-sns` suppress non-speech |
+| Transcript EN / HI / Hinglish | whisper.cpp, one local model per language (§6); word times via `-ml 1` (marked experimental) or `--dtw` token timestamps; `--prompt` + `--carry-initial-prompt` for custom vocabulary; `-sns` suppress non-speech |
 | Chunking | 300 s chunks, 1 s overlap, overlap words assigned by midpoint |
 | Language ID | detect on loudest 30 s |
 | Hallucination filter | drop "thank you for watching / subscribe" style junk |
@@ -264,7 +263,7 @@ Chat that drives the app's own tools (start jobs, tidy Library, bake, push to Pr
 Antigravity CLI, Claude Code, Codex CLI or a local LLM; approval card before deletes or long GPU work.
 
 ### Settings
-Model manager (Hugging Face downloads, sizes, backend per model), Sarvam API key (OS secure storage), CLI paths, output folder, storage size, custom
+Model manager (Hugging Face downloads, sizes, backend per model), CLI paths, output folder, storage size, custom
 vocabulary, layout profiles, caption presets, **System check**, About/changelog, auto-update (app + yt-dlp).
 
 ### Not in scope
@@ -286,24 +285,25 @@ Uploading, scheduling, social accounts, posting queues (BridgeClip's Zernio feat
 ---
 
 ## 6. Hindi / Hinglish ASR
-**Hindi / Hinglish default: Sarvam Saaras v3** (`saaras:v3`). English and offline fallback: Whisper large-v3-turbo.
-- Saaras is **not local**: it runs on Sarvam's API (audio leaves the machine, needs a Sarvam API key, billed per use).
-  Self-hosting is only offered through AWS SageMaker. Whisper stays the offline path.
-- Batch API (`POST /speech-to-text/job/v1`): create job → upload → start → poll/webhook; ≤ 2 h per file,
-  ≤ 20 files per job; speaker diarization; auto language detection (`hi-IN`, …).
-- Modes: `codemix` for Hinglish as spoken, `transcribe` (Devanagari Hindi), `translit` (Roman script — feeds
-  Hinglish captions directly, replacing local transliteration for this path), `verbatim` (keeps fillers and
-  repetitions — use this for filler-word and bad-take removal), `translate` (English subtitles).
-- **Timestamps are chunk-level only (sentence/phrase), no word-level.** Word-by-word captions, filler cuts and
-  dead-air trimming need word times, so a local **forced-alignment** step aligns Saaras text to the audio
-  inside each chunk (CTC aligner, ONNX via `ort`). Which aligner holds up on Hinglish is an M0 test.
-- Long streams: split into ≤ 2 h files (one job, up to 20 files), shift chunk times back onto the source timeline.
-- Custom vocabulary: Saaras v3 has no keyterm list (that is v4-only), so names/tech terms are fixed in the
-  local LLM correction pass.
-- Bake-off still runs on your audio (M0 test), with Saaras v3 as the candidate to beat: Whisper large-v3-turbo,
-  Collabora Whisper-Hindi, Shunya Labs zero-stt-hinglish, AI4Bharat IndicConformer (ONNX).
-  Test set 3 × 10 min of your streams, hand-corrected once. Metric: WER + word-timing error after alignment.
-- Note: whisper.cpp marks `-ml 1` word timestamps experimental; `--dtw` token timestamps are the fallback.
+**Decision: local models only, no API-based speech.** Everything runs on whisper.cpp (one runtime, CUDA on
+NVIDIA, CPU elsewhere), one model per language:
+
+| Language | Model | Base | Output | Notes |
+|---|---|---|---|---|
+| English | whisper large-v3-turbo (ggml, official) | — | English | also the language detector for `auto` |
+| Hinglish | Oriserve Whisper-Hindi2Hinglish-Apex | large-v3-turbo | Roman-script Hinglish | decoded with the `en` token, per its card; best on conversational Indic-Voices (47.6 WER vs 82.6 stock) |
+| Hindi | ARTPARK-IISc whisper-large-v3-vaani-hindi | large-v3 | Devanagari | 718 h Hindi; WER Kathbath 8.85, FLEURS 11.2, CommonVoice 13.8 (model card) |
+
+- All Apache-2.0 / MIT. The two fine-tunes ship as HF safetensors and are converted once to ggml f16 with
+  whisper.cpp's own converter (pinned v1.9.5) in a throwaway `uv` env; the checkpoint is deleted afterwards.
+- Model manager (Settings → Speech models, `clip models install`): resumable downloads, OS file lock so two
+  processes never write the same file, progress streamed over JSON-RPC notifications.
+- Word times from whisper.cpp `-ml 1 -sow` (one segment per word); `--dtw` token timestamps are the fallback if
+  `-ml 1` proves too coarse.
+- `auto`: whisper large-v3-turbo detects the language mid-stream; English → English model, otherwise Hinglish
+  (falls back to Hindi).
+- Transcripts cached per (file, size, mtime, model).
+- Still worth a bake-off on your own audio (M0 test): Apex vs Prime for Hinglish, Vaani vs vasista22 large-v2 for Hindi.
 
 ---
 
@@ -314,7 +314,7 @@ Uploading, scheduling, social accounts, posting queues (BridgeClip's Zernio feat
 2. Premiere 25.6+ / 26.x: `importFiles` with xmeml into the open project; CEP panel loads; `createCaptionTrack`
    from SRT; Transcript JSON format (export one from a Premiere-transcribed clip).
 3. Export an FCP XML from Premiere with Motion + Crop keyframes → copy its exact xmeml structure.
-4. ASR bake-off with Saaras v3 as default candidate, plus forced-alignment accuracy on Hinglish (§6).
+4. ASR bake-off on your audio: Apex vs Prime (Hinglish), Vaani vs vasista22 (Hindi), word-timing quality (§6).
 5. ffmpeg build check: libass with HarfBuzz (`shaping=complex` renders Devanagari), NVENC/AMF/QSV/VideoToolbox.
 6. yt-dlp crate byte-range partial download vs `--download-sections` on a 4 h VOD.
 
@@ -337,6 +337,6 @@ Uploading, scheduling, social accounts, posting queues (BridgeClip's Zernio feat
 - Denoise via DeepFilterNet `libDF` (pure Rust, tract), no ORT needed.
 - OCR via PP-OCRv5 ONNX models (RapidOCR set) on `ort`.
 - C# talks to the core over JSON-RPC (UniFFI has no official C#).
-- Hindi/Hinglish ASR moved to Sarvam Saaras v3 (cloud API, chunk-level timestamps) + local forced alignment;
-  Whisper kept for English and offline use.
+- Speech is local only: whisper.cpp with large-v3-turbo (English), Hindi2Hinglish-Apex (Hinglish) and
+  Vaani large-v3 (Hindi). The Sarvam cloud path was removed.
 

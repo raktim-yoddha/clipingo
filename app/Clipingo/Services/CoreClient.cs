@@ -9,6 +9,9 @@ namespace Clipingo.Services;
 /// <summary>Error reported by the Rust core (clipd).</summary>
 public sealed class CoreException(string message) : Exception(message);
 
+/// <summary>Progress notification for a long call; <c>Total</c> is null when unknown.</summary>
+public sealed record CoreProgress(string Stage, long Done, long? Total);
+
 /// <summary>
 /// JSON-RPC 2.0 client for clipd over the <c>\\.\pipe\clipingo</c> named pipe, one JSON object per line.
 /// Starts clipd on first use if it is not already running.
@@ -25,7 +28,8 @@ public sealed class CoreClient : IAsyncDisposable
     private StreamWriter? _writer;
     private int _nextId;
 
-    public async Task<T> CallAsync<T>(string method, object? parameters, CancellationToken ct = default)
+    /// <param name="progress">Receives clipd's progress notifications for this call (long installs).</param>
+    public async Task<T> CallAsync<T>(string method, object? parameters, CancellationToken ct = default, IProgress<CoreProgress>? progress = null)
     {
         await _gate.WaitAsync(ct);
         try
@@ -37,8 +41,17 @@ public sealed class CoreClient : IAsyncDisposable
                 request["params"] = JsonSerializer.SerializeToNode(parameters, Json);
             await _writer!.WriteLineAsync(request.ToJsonString().AsMemory(), ct);
 
-            var line = await _reader!.ReadLineAsync(ct) ?? throw new IOException("clipd closed the connection");
-            var reply = JsonNode.Parse(line)!.AsObject();
+            JsonObject reply;
+            while (true)
+            {
+                var line = await _reader!.ReadLineAsync(ct) ?? throw new IOException("clipd closed the connection");
+                reply = JsonNode.Parse(line)!.AsObject();
+                if (reply.ContainsKey("id"))
+                    break;
+                // A notification ("progress") arrives before the reply to the call it belongs to.
+                if (reply["method"]?.GetValue<string>() == "progress" && reply["params"].Deserialize<CoreProgress>(Json) is { } p)
+                    progress?.Report(p);
+            }
             if (reply["error"] is JsonObject error)
                 throw new CoreException(error["message"]?.GetValue<string>() ?? "Unknown core error");
             return reply["result"].Deserialize<T>(Json) ?? throw new CoreException($"{method} returned no result");
