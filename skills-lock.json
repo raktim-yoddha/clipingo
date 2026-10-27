@@ -31,11 +31,11 @@
       "skillPath": "skills/rust-best-practices/SKILL.md",
       "computedHash": "5f050929b5b62c8c847b75955d7d773be9dc649d03778e6e94cd8db1101fb674"
     },
-    "winui-app": {
-      "source": "openai/skills",
+    "winui3-full-skill": {
+      "source": "sudocode76/winui3-skills",
       "sourceType": "github",
-      "skillPath": "skills/.curated/winui-app/SKILL.md",
-      "computedHash": "d4d9408ca78c5f574af0699ad6749ba840505ba18d0913f470af32d5ffab7c64"
+      "skillPath": "SKILL.md",
+      "computedHash": "e482122aa971e15b691aa82c197fc05cc65907e643b9f85c26a9b7edeed95c04"
     }
   }
 }
