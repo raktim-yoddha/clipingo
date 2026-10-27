@@ -29,6 +29,6 @@ Needs on `PATH`: `ffmpeg`/`ffprobe`, and for YouTube links `yt-dlp` + `deno`. **
 | Method | Params | Result |
 |---|---|---|
 | `version` | — | `{ version }` |
-| `system.check` | — | tools found, NVIDIA GPUs |
+| `system.check` | — | tools found, NVIDIA GPUs, H.264 encoders actually probed (NVENC → QSV → AMF → MF → x264) with fix hints, selected encoder |
 | `source.probe` | `{ input }` file path or https YouTube link | title, channel, duration, size, fps, views, upload date |
 | `scorer.find` | `{ words: [{w,s,e}], options?: {min_len,max_len,count} }` | ranked clip candidates |

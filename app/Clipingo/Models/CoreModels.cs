@@ -18,4 +18,11 @@ public sealed record SourceInfo(
 
 public sealed record ToolStatus(string Name, string Purpose, bool Required, bool Found, string? Version);
 
-public sealed record SystemReport(string Os, IReadOnlyList<ToolStatus> Tools, IReadOnlyList<string> NvidiaGpus);
+public sealed record EncoderStatus(string Name, string Label, bool Works, string? Error, string? Hint);
+
+public sealed record SystemReport(
+    string Os,
+    IReadOnlyList<ToolStatus> Tools,
+    IReadOnlyList<string> NvidiaGpus,
+    IReadOnlyList<EncoderStatus> Encoders,
+    string? SelectedEncoder);

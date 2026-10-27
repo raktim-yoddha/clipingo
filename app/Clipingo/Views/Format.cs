@@ -13,4 +13,6 @@ public static class Format
     public static Visibility Not(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
 
     public static string ToolState(bool found, bool required) => found ? "Installed" : required ? "Missing (required)" : "Missing (optional)";
+
+    public static string EncoderState(bool works) => works ? "Works" : "Unavailable";
 }
