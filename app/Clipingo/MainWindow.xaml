@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Clipingo">
+
     <Window.SystemBackdrop>
         <DesktopAcrylicBackdrop />
     </Window.SystemBackdrop>
@@ -14,7 +15,10 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TitleBar x:Name="AppTitleBar" Title="Clipingo" Subtitle="Stream clipper">
+        <TitleBar
+            x:Name="AppTitleBar"
+            Title="Clipingo"
+            Subtitle="Stream clipper">
             <TitleBar.IconSource>
                 <ImageIconSource ImageSource="Assets/AppIcon.ico" />
             </TitleBar.IconSource>
@@ -24,17 +28,46 @@
             x:Name="Nav"
             Grid.Row="1"
             IsBackButtonVisible="Collapsed"
-            IsSettingsVisible="True"
+            IsPaneToggleButtonVisible="False"
+            IsSettingsVisible="False"
+            OpenPaneLength="232"
             PaneDisplayMode="Left"
             SelectionChanged="Nav_SelectionChanged">
             <NavigationView.MenuItems>
+                <NavigationViewItemHeader Content="STUDIO" />
                 <NavigationViewItem
                     x:Name="CreateItem"
                     AutomationProperties.Name="Create clips"
                     Content="Create"
                     Tag="Create">
                     <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE714;" />
+                        <FontIcon Glyph="&#xE945;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    AutomationProperties.Name="Library"
+                    Content="Library"
+                    Tag="Library">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8B7;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    x:Name="JobsItem"
+                    AutomationProperties.Name="Jobs"
+                    Content="Jobs"
+                    Tag="Jobs">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE81E;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItemHeader Content="WORKSPACE" />
+                <NavigationViewItem
+                    AutomationProperties.Name="Settings"
+                    Content="Settings"
+                    Tag="Settings">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE713;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>

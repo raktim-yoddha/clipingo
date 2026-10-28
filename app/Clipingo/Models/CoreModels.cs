@@ -38,3 +38,14 @@ public sealed record SystemReport(
     string? SelectedEncoder,
     string? WhisperCli,
     IReadOnlyList<ModelStatus> SpeechModels);
+
+public sealed record CaptionPreset(string Id, string Name, string Description, string Font, bool Italic, string Primary, string Highlight, bool Upper);
+
+public sealed record RunListing(
+    string Id,
+    string Dir,
+    SourceInfo Source,
+    string Media,
+    TranscriptSummary Transcript,
+    IReadOnlyList<Candidate> Candidates,
+    IReadOnlyList<string> Clips);

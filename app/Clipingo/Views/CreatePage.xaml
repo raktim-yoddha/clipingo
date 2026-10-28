@@ -3,233 +3,988 @@
     x:Class="Clipingo.Views.CreatePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:models="using:Clipingo.Models"
     xmlns:views="using:Clipingo.Views"
     xmlns:vm="using:Clipingo.ViewModels"
     Background="Transparent">
 
-    <ScrollViewer>
-        <StackPanel MaxWidth="880" Padding="36,24" Spacing="16">
-            <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="Create" />
-            <TextBlock
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Text="Choose a video: a local file or a YouTube stream link."
-                TextWrapping="Wrap" />
+    <Page.KeyboardAccelerators>
+        <KeyboardAccelerator
+            Key="Enter"
+            Invoked="Generate_Accelerator"
+            Modifiers="Control" />
+    </Page.KeyboardAccelerators>
 
-            <Grid ColumnSpacing="8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBox
-                    AutomationProperties.Name="Video link or file path"
-                    KeyDown="SourceBox_KeyDown"
-                    PlaceholderText="https://www.youtube.com/watch?v=… or C:\Videos\stream.mp4"
-                    Text="{x:Bind ViewModel.SourceInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <Button
-                    Grid.Column="1"
-                    AutomationProperties.Name="Browse for a video file"
-                    Click="Browse_Click"
-                    Content="Browse…" />
-                <Button
-                    Grid.Column="2"
-                    AutomationProperties.Name="Load video"
-                    Command="{x:Bind ViewModel.ProbeCommand}"
-                    Content="Load"
-                    Style="{StaticResource AccentButtonStyle}" />
-            </Grid>
+    <Page.Resources>
+        <x:Double x:Key="SectionSpacing">32</x:Double>
 
-            <ProgressBar IsIndeterminate="True" Visibility="{x:Bind ViewModel.ProbeCommand.IsRunning, Mode=OneWay}" />
-
-            <InfoBar
-                Title="Could not load this video"
-                IsClosable="False"
-                IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}"
-                Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Severity="Error" />
-
-            <!--  Video card  -->
-            <Grid
-                Padding="16"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                ColumnSpacing="16"
-                CornerRadius="8"
-                Visibility="{x:Bind ViewModel.HasSource, Mode=OneWay}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Border
-                    Width="240"
-                    Height="135"
-                    Background="{ThemeResource ControlFillColorSecondaryBrush}"
-                    CornerRadius="4">
-                    <Grid>
-                        <FontIcon FontSize="32" Glyph="&#xE714;" />
-                        <Image
-                            AutomationProperties.Name="Video thumbnail"
-                            Source="{x:Bind views:Format.Image(ViewModel.Source.Thumbnail), Mode=OneWay}"
-                            Stretch="UniformToFill" />
-                    </Grid>
-                </Border>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+        <!--  Workflow: title, level, description, steps.  -->
+        <DataTemplate x:Key="WorkflowTile" x:DataType="vm:OptionItem">
+            <ToggleButton
+                Padding="20,18"
+                AutomationProperties.Name="{x:Bind Title}"
+                IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
+                Style="{StaticResource TileToggle}">
+                <StackPanel Margin="0,0,24,0" Spacing="6">
+                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
                     <TextBlock
-                        MaxLines="2"
-                        Style="{StaticResource SubtitleTextBlockStyle}"
-                        Text="{x:Bind ViewModel.Source.Title, Mode=OneWay}"
-                        TextTrimming="CharacterEllipsis"
-                        TextWrapping="Wrap" />
-                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind ViewModel.Channel, Mode=OneWay}" />
+                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Text="{x:Bind Mono}" />
                     <TextBlock
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Text="{x:Bind ViewModel.Details, Mode=OneWay}"
-                        TextWrapping="Wrap" />
+                        Margin="0,4,0,0"
+                        Style="{StaticResource DescriptionText}"
+                        Text="{x:Bind Hint}" />
+                    <TextBlock
+                        Margin="0,6,0,0"
+                        Style="{StaticResource HintText}"
+                        Text="{x:Bind Primary}" />
                 </StackPanel>
-            </Grid>
+            </ToggleButton>
+        </DataTemplate>
 
-            <!--  Find clips  -->
-            <Grid ColumnSpacing="12" Visibility="{x:Bind ViewModel.HasSource, Mode=OneWay}">
+        <!--  Format: aspect icon, title + ratio, platforms.  -->
+        <DataTemplate x:Key="FormatTile" x:DataType="vm:OptionItem">
+            <ToggleButton
+                Padding="18,16"
+                AutomationProperties.Name="{x:Bind Title}"
+                IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
+                Style="{StaticResource TileToggle}">
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <Grid Width="28" Height="26">
+                        <Border
+                            Width="{x:Bind views:Format.RatioWidth(Id)}"
+                            Height="{x:Bind views:Format.RatioHeight(Id)}"
+                            BorderBrush="{ThemeResource TextFillColorSecondaryBrush}"
+                            BorderThickness="1.5"
+                            CornerRadius="3" />
+                    </Grid>
+                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}">
+                            <Run Text="{x:Bind Title}" />
+                            <Run
+                                FontWeight="Normal"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="{x:Bind Mono}" />
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Hint}" />
+                    </StackPanel>
+                </StackPanel>
+            </ToggleButton>
+        </DataTemplate>
+
+        <!--  Framing: a tiny 9:16 diagram (split, full bleed, letterbox).  -->
+        <DataTemplate x:Key="FramingTile" x:DataType="vm:OptionItem">
+            <ToggleButton
+                Padding="18,16"
+                AutomationProperties.Name="{x:Bind Title}"
+                IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
+                Style="{StaticResource TileToggle}">
+                <StackPanel Orientation="Horizontal" Spacing="14">
+                    <Border
+                        Width="16"
+                        Height="27"
+                        Padding="2"
+                        VerticalAlignment="Center"
+                        BorderBrush="{ThemeResource TextFillColorSecondaryBrush}"
+                        BorderThickness="1.5"
+                        CornerRadius="3">
+                        <Grid>
+                            <Grid RowSpacing="1.5" Visibility="{x:Bind views:Format.Is(Id, 'smart')}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition />
+                                    <RowDefinition />
+                                </Grid.RowDefinitions>
+                                <Rectangle
+                                    Fill="{ThemeResource TextFillColorSecondaryBrush}"
+                                    RadiusX="1"
+                                    RadiusY="1" />
+                                <Rectangle
+                                    Grid.Row="1"
+                                    Fill="{ThemeResource TextFillColorTertiaryBrush}"
+                                    RadiusX="1"
+                                    RadiusY="1" />
+                            </Grid>
+                            <Rectangle
+                                Fill="{ThemeResource TextFillColorSecondaryBrush}"
+                                RadiusX="1"
+                                RadiusY="1"
+                                Visibility="{x:Bind views:Format.Is(Id, 'full')}" />
+                            <Rectangle
+                                Height="7"
+                                VerticalAlignment="Center"
+                                Fill="{ThemeResource TextFillColorSecondaryBrush}"
+                                RadiusX="1"
+                                RadiusY="1"
+                                Visibility="{x:Bind views:Format.Is(Id, 'classic')}" />
+                        </Grid>
+                    </Border>
+                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
+                        <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Hint}" />
+                    </StackPanel>
+                </StackPanel>
+            </ToggleButton>
+        </DataTemplate>
+
+        <!--  Speed and length: value over a small label, centred.  -->
+        <DataTemplate x:Key="ValueTile" x:DataType="vm:OptionItem">
+            <ToggleButton
+                Padding="8,14"
+                HorizontalContentAlignment="Center"
+                AutomationProperties.Name="{x:Bind views:Format.TileName(Title, Mono)}"
+                IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
+                Style="{StaticResource TileToggle}">
+                <StackPanel HorizontalAlignment="Center" Spacing="4">
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        Text="{x:Bind Mono}" />
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Text="{x:Bind views:Format.Either(Hint, Title)}" />
+                </StackPanel>
+            </ToggleButton>
+        </DataTemplate>
+
+        <!--  Language: title + model.  -->
+        <DataTemplate x:Key="TextTile" x:DataType="vm:OptionItem">
+            <ToggleButton
+                Padding="18,16"
+                AutomationProperties.Name="{x:Bind Title}"
+                IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
+                Style="{StaticResource TileToggle}">
+                <StackPanel Margin="0,0,20,0" Spacing="4">
+                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
+                    <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Hint}" />
+                </StackPanel>
+            </ToggleButton>
+        </DataTemplate>
+
+        <!--  Caption style: a sample in the style's font and colours, then name + description.  -->
+        <DataTemplate x:Key="CaptionTile" x:DataType="vm:OptionItem">
+            <ToggleButton
+                Padding="10"
+                AutomationProperties.Name="{x:Bind views:Format.TileName('Caption style', Title)}"
+                IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
+                Style="{StaticResource TileToggle}">
+                <StackPanel Spacing="12">
+                    <Border
+                        Height="72"
+                        Background="{x:Bind views:Format.PreviewBackground(Id)}"
+                        CornerRadius="{StaticResource ControlCornerRadius}">
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            FontFamily="{x:Bind views:Format.Font(Font)}"
+                            FontSize="18"
+                            FontStyle="{x:Bind views:Format.Italic(Italic)}"
+                            FontWeight="Black">
+                            <Run Foreground="{x:Bind views:Format.Hex(Primary)}" Text="{x:Bind Sample}" />
+                            <Run Foreground="{x:Bind views:Format.Hex(Highlight)}" Text="{x:Bind SampleActive}" />
+                        </TextBlock>
+                    </Border>
+                    <StackPanel Padding="6,0,6,4" Spacing="2">
+                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
+                        <TextBlock
+                            Style="{StaticResource HintText}"
+                            Text="{x:Bind Hint}"
+                            TextTrimming="CharacterEllipsis"
+                            TextWrapping="NoWrap" />
+                    </StackPanel>
+                </StackPanel>
+            </ToggleButton>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ReviewRowTemplate" x:DataType="vm:ReviewRow">
+            <Grid
+                MinHeight="52"
+                Padding="20,8,12,8"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="0,0,0,1"
+                ColumnSpacing="16">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="140" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <ComboBox
-                    MinWidth="160"
-                    AutomationProperties.Name="Spoken language"
-                    Header="Language"
-                    ItemsSource="{x:Bind ViewModel.Languages}"
-                    SelectedItem="{x:Bind ViewModel.Language, Mode=TwoWay}" />
+                <TextBlock
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource BodyTextBlockStyle}"
+                    Text="{x:Bind Label}" />
                 <TextBlock
                     Grid.Column="1"
-                    VerticalAlignment="Bottom"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Transcribed locally. English uses whisper large-v3-turbo, Hinglish Hindi2Hinglish-Apex, Hindi Vaani."
-                    TextWrapping="Wrap" />
+                    VerticalAlignment="Center"
+                    Style="{StaticResource BodyTextBlockStyle}"
+                    Text="{x:Bind Value}"
+                    TextTrimming="CharacterEllipsis"
+                    TextWrapping="NoWrap" />
                 <Button
                     Grid.Column="2"
-                    VerticalAlignment="Bottom"
-                    AutomationProperties.Name="Find clips"
-                    Command="{x:Bind ViewModel.FindClipsCommand}"
-                    Content="Find clips"
-                    Style="{StaticResource AccentButtonStyle}" />
+                    AutomationProperties.Name="{x:Bind views:Format.TileName('Edit', Label)}"
+                    Click="EditRow_Click"
+                    Content="Edit"
+                    Style="{StaticResource GhostButton}"
+                    Tag="{x:Bind Step}" />
             </Grid>
+        </DataTemplate>
+    </Page.Resources>
 
-            <StackPanel Spacing="4" Visibility="{x:Bind views:Format.Has(ViewModel.StageText), Mode=OneWay}">
-                <ProgressBar
-                    IsIndeterminate="{x:Bind ViewModel.IsIndeterminate, Mode=OneWay}"
-                    Maximum="100"
-                    Value="{x:Bind ViewModel.ProgressValue, Mode=OneWay}" />
-                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind ViewModel.StageText, Mode=OneWay}" />
-            </StackPanel>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-            <!--  Candidates  -->
-            <StackPanel Spacing="8" Visibility="{x:Bind ViewModel.HasRun, Mode=OneWay}">
-                <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="Moments" />
-                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind ViewModel.RunSummary, Mode=OneWay}" />
-                <ItemsControl AutomationProperties.Name="Clip candidates" ItemsSource="{x:Bind ViewModel.Candidates}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="vm:CandidateItem">
-                            <Grid
-                                Margin="0,4"
-                                Padding="12"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1"
-                                ColumnSpacing="12"
-                                CornerRadius="6">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <CheckBox
-                                    MinWidth="0"
-                                    AutomationProperties.Name="{x:Bind Title}"
-                                    IsChecked="{x:Bind IsSelected, Mode=TwoWay}" />
-                                <StackPanel Grid.Column="1" Spacing="2">
-                                    <TextBlock
-                                        Style="{StaticResource BodyStrongTextBlockStyle}"
-                                        Text="{x:Bind Title}"
-                                        TextWrapping="Wrap" />
-                                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind Range}" />
-                                    <TextBlock Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="{x:Bind Reasons}" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                                    <TextBlock
-                                        HorizontalAlignment="Center"
-                                        Style="{StaticResource SubtitleTextBlockStyle}"
-                                        Text="{x:Bind Score}" />
-                                    <TextBlock
-                                        HorizontalAlignment="Center"
-                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                        Text="score" />
-                                </StackPanel>
-                            </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+        <ScrollViewer x:Name="PageScroll">
+            <StackPanel
+                MaxWidth="{StaticResource PageMaxWidth}"
+                Padding="{StaticResource PagePadding}"
+                Spacing="24">
+                <StackPanel Spacing="8">
+                    <TextBlock
+                        AutomationProperties.HeadingLevel="Level1"
+                        Style="{StaticResource TitleTextBlockStyle}"
+                        Text="Create clips" />
+                    <TextBlock Style="{StaticResource DescriptionText}" Text="Pick a long video and a few options. Clipingo finds the strongest moments and cuts them into captioned clips." />
+                </StackPanel>
 
-                <Grid ColumnSpacing="24">
+                <!--  Stepper  -->
+                <Grid Visibility="{x:Bind ViewModel.IsEditing, Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <ToggleSwitch
-                        AutomationProperties.Name="Output format"
-                        Header="Format"
-                        IsOn="{x:Bind ViewModel.Vertical, Mode=TwoWay}"
-                        OffContent="Horizontal 16:9"
-                        OnContent="Vertical 9:16" />
-                    <ToggleSwitch
+                    <Button
+                        Grid.Column="0"
+                        AutomationProperties.Name="Step 1: Video"
+                        Background="{x:Bind views:Format.StepPill(ViewModel.Step, 0), Mode=OneWay}"
+                        Command="{x:Bind ViewModel.GoToCommand}"
+                        CommandParameter="0"
+                        Style="{StaticResource GhostButton}">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Grid Width="28" Height="28">
+                                <Ellipse Fill="{x:Bind views:Format.StepDot(ViewModel.Step, 0), Mode=OneWay}" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    FontFamily="{x:Bind views:Format.StepNumberFont(ViewModel.Step, 0), Mode=OneWay}"
+                                    FontSize="12"
+                                    Foreground="{x:Bind views:Format.StepDotInk(ViewModel.Step, 0), Mode=OneWay}"
+                                    Text="{x:Bind views:Format.StepNumber(ViewModel.Step, 0), Mode=OneWay}" />
+                            </Grid>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Foreground="{x:Bind views:Format.StepLabel(ViewModel.Step, 0), Mode=OneWay}"
+                                Text="Video" />
+                        </StackPanel>
+                    </Button>
+                    <Rectangle
                         Grid.Column="1"
-                        Header="Cut dead air and fillers"
-                        IsOn="{x:Bind ViewModel.CutDeadAir, Mode=TwoWay}" />
-                    <ToggleSwitch
+                        Height="1"
+                        Margin="12,0"
+                        Fill="{x:Bind views:Format.StepLine(ViewModel.Step, 0), Mode=OneWay}" />
+                    <Button
                         Grid.Column="2"
-                        Header="Burn in captions"
-                        IsOn="{x:Bind ViewModel.BurnCaptions, Mode=TwoWay}" />
+                        AutomationProperties.Name="Step 2: Format"
+                        Background="{x:Bind views:Format.StepPill(ViewModel.Step, 1), Mode=OneWay}"
+                        Command="{x:Bind ViewModel.GoToCommand}"
+                        CommandParameter="1"
+                        Style="{StaticResource GhostButton}">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Grid Width="28" Height="28">
+                                <Ellipse Fill="{x:Bind views:Format.StepDot(ViewModel.Step, 1), Mode=OneWay}" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    FontFamily="{x:Bind views:Format.StepNumberFont(ViewModel.Step, 1), Mode=OneWay}"
+                                    FontSize="12"
+                                    Foreground="{x:Bind views:Format.StepDotInk(ViewModel.Step, 1), Mode=OneWay}"
+                                    Text="{x:Bind views:Format.StepNumber(ViewModel.Step, 1), Mode=OneWay}" />
+                            </Grid>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Foreground="{x:Bind views:Format.StepLabel(ViewModel.Step, 1), Mode=OneWay}"
+                                Text="Format" />
+                        </StackPanel>
+                    </Button>
+                    <Rectangle
+                        Grid.Column="3"
+                        Height="1"
+                        Margin="12,0"
+                        Fill="{x:Bind views:Format.StepLine(ViewModel.Step, 1), Mode=OneWay}" />
                     <Button
                         Grid.Column="4"
-                        VerticalAlignment="Bottom"
-                        AutomationProperties.Name="Render selected clips"
-                        Command="{x:Bind ViewModel.RenderCommand}"
-                        Content="Render selected"
-                        Style="{StaticResource AccentButtonStyle}" />
-                </Grid>
-            </StackPanel>
-
-            <!--  Rendered  -->
-            <StackPanel Spacing="6" Visibility="{x:Bind ViewModel.HasRendered, Mode=OneWay}">
-                <Grid>
-                    <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="Rendered" />
+                        AutomationProperties.Name="Step 3: Clips"
+                        Background="{x:Bind views:Format.StepPill(ViewModel.Step, 2), Mode=OneWay}"
+                        Command="{x:Bind ViewModel.GoToCommand}"
+                        CommandParameter="2"
+                        Style="{StaticResource GhostButton}">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Grid Width="28" Height="28">
+                                <Ellipse Fill="{x:Bind views:Format.StepDot(ViewModel.Step, 2), Mode=OneWay}" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    FontFamily="{x:Bind views:Format.StepNumberFont(ViewModel.Step, 2), Mode=OneWay}"
+                                    FontSize="12"
+                                    Foreground="{x:Bind views:Format.StepDotInk(ViewModel.Step, 2), Mode=OneWay}"
+                                    Text="{x:Bind views:Format.StepNumber(ViewModel.Step, 2), Mode=OneWay}" />
+                            </Grid>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Foreground="{x:Bind views:Format.StepLabel(ViewModel.Step, 2), Mode=OneWay}"
+                                Text="Clips" />
+                        </StackPanel>
+                    </Button>
+                    <Rectangle
+                        Grid.Column="5"
+                        Height="1"
+                        Margin="12,0"
+                        Fill="{x:Bind views:Format.StepLine(ViewModel.Step, 2), Mode=OneWay}" />
                     <Button
-                        HorizontalAlignment="Right"
-                        AutomationProperties.Name="Open output folder"
-                        Command="{x:Bind ViewModel.OpenOutputFolderCommand}"
-                        Content="Open folder" />
+                        Grid.Column="6"
+                        AutomationProperties.Name="Step 4: Captions"
+                        Background="{x:Bind views:Format.StepPill(ViewModel.Step, 3), Mode=OneWay}"
+                        Command="{x:Bind ViewModel.GoToCommand}"
+                        CommandParameter="3"
+                        Style="{StaticResource GhostButton}">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Grid Width="28" Height="28">
+                                <Ellipse Fill="{x:Bind views:Format.StepDot(ViewModel.Step, 3), Mode=OneWay}" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    FontFamily="{x:Bind views:Format.StepNumberFont(ViewModel.Step, 3), Mode=OneWay}"
+                                    FontSize="12"
+                                    Foreground="{x:Bind views:Format.StepDotInk(ViewModel.Step, 3), Mode=OneWay}"
+                                    Text="{x:Bind views:Format.StepNumber(ViewModel.Step, 3), Mode=OneWay}" />
+                            </Grid>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Foreground="{x:Bind views:Format.StepLabel(ViewModel.Step, 3), Mode=OneWay}"
+                                Text="Captions" />
+                        </StackPanel>
+                    </Button>
+                    <Rectangle
+                        Grid.Column="7"
+                        Height="1"
+                        Margin="12,0"
+                        Fill="{x:Bind views:Format.StepLine(ViewModel.Step, 3), Mode=OneWay}" />
+                    <Button
+                        Grid.Column="8"
+                        AutomationProperties.Name="Step 5: Review"
+                        Background="{x:Bind views:Format.StepPill(ViewModel.Step, 4), Mode=OneWay}"
+                        Command="{x:Bind ViewModel.GoToCommand}"
+                        CommandParameter="4"
+                        Style="{StaticResource GhostButton}">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Grid Width="28" Height="28">
+                                <Ellipse Fill="{x:Bind views:Format.StepDot(ViewModel.Step, 4), Mode=OneWay}" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    FontFamily="{x:Bind views:Format.StepNumberFont(ViewModel.Step, 4), Mode=OneWay}"
+                                    FontSize="12"
+                                    Foreground="{x:Bind views:Format.StepDotInk(ViewModel.Step, 4), Mode=OneWay}"
+                                    Text="{x:Bind views:Format.StepNumber(ViewModel.Step, 4), Mode=OneWay}" />
+                            </Grid>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Foreground="{x:Bind views:Format.StepLabel(ViewModel.Step, 4), Mode=OneWay}"
+                                Text="Review" />
+                        </StackPanel>
+                    </Button>
                 </Grid>
-                <TextBlock
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Each clip has an .mp4, an .srt for Premiere captions and an .xml timeline (File → Import in Premiere)."
-                    TextWrapping="Wrap" />
-                <ItemsControl AutomationProperties.Name="Rendered clips" ItemsSource="{x:Bind ViewModel.Rendered}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="models:RenderedClip">
-                            <TextBlock Margin="0,2" TextWrapping="Wrap">
-                                <Run FontWeight="SemiBold" Text="{x:Bind Title}" />
-                                <Run Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind views:Format.ClipLine(DurationS, RemovedS, Encoder)}" />
-                            </TextBlock>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+
+                <InfoBar
+                    IsClosable="True"
+                    IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}"
+                    Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                    Severity="Error" />
+
+                <!--  The step panel (glass)  -->
+                <Border Style="{StaticResource PanelBorder}" Visibility="{x:Bind ViewModel.IsEditing, Mode=OneWay}">
+                    <StackPanel Spacing="{StaticResource SectionSpacing}">
+                        <StackPanel Spacing="6" Visibility="{x:Bind ViewModel.ShowStepHeader, Mode=OneWay}">
+                            <TextBlock
+                                AutomationProperties.HeadingLevel="Level2"
+                                Style="{StaticResource SubtitleTextBlockStyle}"
+                                Text="{x:Bind ViewModel.StepTitle, Mode=OneWay}" />
+                            <TextBlock Style="{StaticResource DescriptionText}" Text="{x:Bind ViewModel.StepDescription, Mode=OneWay}" />
+                        </StackPanel>
+
+                        <!--  1 · Video  -->
+                        <StackPanel Spacing="{StaticResource SectionSpacing}" Visibility="{x:Bind views:Format.IsStep(ViewModel.Step, 0), Mode=OneWay}">
+                            <StackPanel Spacing="12">
+                                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Workflow" />
+                                <ItemsRepeater ItemTemplate="{StaticResource WorkflowTile}" ItemsSource="{x:Bind ViewModel.Workflow.Items}">
+                                    <ItemsRepeater.Layout>
+                                        <UniformGridLayout
+                                            ItemsStretch="Fill"
+                                            MaximumRowsOrColumns="2"
+                                            MinColumnSpacing="12"
+                                            MinItemWidth="280"
+                                            MinRowSpacing="12" />
+                                    </ItemsRepeater.Layout>
+                                </ItemsRepeater>
+                            </StackPanel>
+
+                            <StackPanel Spacing="12">
+                                <StackPanel Spacing="6">
+                                    <TextBlock
+                                        AutomationProperties.HeadingLevel="Level2"
+                                        Style="{StaticResource SubtitleTextBlockStyle}"
+                                        Text="Choose a video" />
+                                    <TextBlock Style="{StaticResource DescriptionText}" Text="A local file or a YouTube link. Optionally suggest where to find clips." />
+                                </StackPanel>
+                                <Grid Margin="0,4,0,0" ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox
+                                        AutomationProperties.Name="Video link or file path"
+                                        KeyDown="SourceBox_KeyDown"
+                                        PlaceholderText="https://www.youtube.com/watch?v=… or C:\Videos\stream.mp4"
+                                        Text="{x:Bind ViewModel.SourceInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button
+                                        Grid.Column="1"
+                                        AutomationProperties.Name="Browse for a video file"
+                                        Click="Browse_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon FontSize="14" Glyph="&#xE8E5;" />
+                                            <TextBlock Text="Browse" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button
+                                        Grid.Column="2"
+                                        MinWidth="88"
+                                        AutomationProperties.Name="Load video"
+                                        Command="{x:Bind ViewModel.ProbeCommand}"
+                                        Content="Load"
+                                        Style="{StaticResource AccentButtonStyle}" />
+                                </Grid>
+                                <ProgressBar IsIndeterminate="True" Visibility="{x:Bind ViewModel.ProbeCommand.IsRunning, Mode=OneWay}" />
+
+                                <!--  Video card  -->
+                                <Grid
+                                    Padding="12"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    ColumnSpacing="20"
+                                    CornerRadius="{StaticResource OverlayCornerRadius}"
+                                    Visibility="{x:Bind ViewModel.HasSource, Mode=OneWay}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border
+                                        Width="192"
+                                        Height="108"
+                                        Background="{ThemeResource ControlFillColorTertiaryBrush}"
+                                        CornerRadius="{StaticResource ControlCornerRadius}">
+                                        <Grid>
+                                            <FontIcon
+                                                FontSize="28"
+                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                Glyph="&#xE714;" />
+                                            <Image
+                                                AutomationProperties.Name="Video thumbnail"
+                                                Source="{x:Bind views:Format.Image(ViewModel.Source.Thumbnail), Mode=OneWay}"
+                                                Stretch="UniformToFill" />
+                                        </Grid>
+                                    </Border>
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Spacing="6">
+                                        <TextBlock
+                                            MaxLines="2"
+                                            Style="{StaticResource BodyLargeStrongTextBlockStyle}"
+                                            Text="{x:Bind ViewModel.Source.Title, Mode=OneWay}" />
+                                        <TextBlock Style="{StaticResource DescriptionText}" Text="{x:Bind ViewModel.Channel, Mode=OneWay}" />
+                                        <TextBlock Style="{StaticResource HintText}" Text="{x:Bind ViewModel.Details, Mode=OneWay}" />
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+
+                            <StackPanel Spacing="4">
+                                <Border Style="{StaticResource SettingRowBorder}">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE823;" Style="{StaticResource SettingIcon}" />
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Spacing="2">
+                                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Preferred part of the video" />
+                                            <TextBlock Style="{StaticResource HintText}" Text="Suggest where to find clips. The whole video is still transcribed; a clip's middle must fall inside the range." />
+                                        </StackPanel>
+                                        <ToggleSwitch
+                                            Grid.Column="2"
+                                            MinWidth="0"
+                                            AutomationProperties.Name="Prefer a source range"
+                                            IsOn="{x:Bind ViewModel.PreferRange, Mode=TwoWay}"
+                                            OffContent="Off"
+                                            OnContent="On" />
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SettingRowBorder}" Visibility="{x:Bind ViewModel.PreferRange, Mode=OneWay}">
+                                    <StackPanel Margin="40,0,0,0" Spacing="8">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition />
+                                                <ColumnDefinition />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox
+                                                AutomationProperties.Name="Start time"
+                                                Header="Start"
+                                                PlaceholderText="0:00"
+                                                Text="{x:Bind ViewModel.RangeStart, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                            <TextBox
+                                                Grid.Column="1"
+                                                AutomationProperties.Name="End time"
+                                                Header="End"
+                                                PlaceholderText="End of video"
+                                                Text="{x:Bind ViewModel.RangeEnd, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        </Grid>
+                                        <TextBlock
+                                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                            Style="{StaticResource HintText}"
+                                            Text="{x:Bind ViewModel.RangeError, Mode=OneWay}"
+                                            Visibility="{x:Bind ViewModel.HasRangeError, Mode=OneWay}" />
+                                        <TextBlock
+                                            Style="{StaticResource HintText}"
+                                            Text="Use seconds (90) or minutes and seconds (1:30)."
+                                            Visibility="{x:Bind views:Format.Not(ViewModel.HasRangeError), Mode=OneWay}" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!--  2 · Format  -->
+                        <StackPanel Spacing="{StaticResource SectionSpacing}" Visibility="{x:Bind views:Format.IsStep(ViewModel.Step, 1), Mode=OneWay}">
+                            <StackPanel Spacing="12">
+                                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Format" />
+                                <ItemsRepeater ItemTemplate="{StaticResource FormatTile}" ItemsSource="{x:Bind ViewModel.AspectRatio.Items}">
+                                    <ItemsRepeater.Layout>
+                                        <UniformGridLayout
+                                            ItemsStretch="Fill"
+                                            MaximumRowsOrColumns="2"
+                                            MinColumnSpacing="12"
+                                            MinItemWidth="260"
+                                            MinRowSpacing="12" />
+                                    </ItemsRepeater.Layout>
+                                </ItemsRepeater>
+                            </StackPanel>
+                            <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.IsVertical, Mode=OneWay}">
+                                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Framing" />
+                                <ItemsRepeater ItemTemplate="{StaticResource FramingTile}" ItemsSource="{x:Bind ViewModel.Framing.Items}">
+                                    <ItemsRepeater.Layout>
+                                        <UniformGridLayout
+                                            ItemsStretch="Fill"
+                                            MaximumRowsOrColumns="3"
+                                            MinColumnSpacing="12"
+                                            MinItemWidth="200"
+                                            MinRowSpacing="12" />
+                                    </ItemsRepeater.Layout>
+                                </ItemsRepeater>
+                                <Border Style="{StaticResource SettingRowBorder}" Visibility="{x:Bind views:Format.Both(ViewModel.IsVertical, ViewModel.IsSmartFraming), Mode=OneWay}">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE890;" Style="{StaticResource SettingIcon}" />
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Spacing="2">
+                                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Check tricky shots with AI vision" />
+                                            <TextBlock Style="{StaticResource HintText}" Text="Antigravity CLI looks at shots the face detector is unsure about. Uses your Antigravity sign-in; about a minute per unsure clip." />
+                                        </StackPanel>
+                                        <ToggleSwitch
+                                            Grid.Column="2"
+                                            MinWidth="0"
+                                            AutomationProperties.Name="AI vision for smart framing"
+                                            IsOn="{x:Bind ViewModel.VisionCheck, Mode=TwoWay}"
+                                            OffContent="Off"
+                                            OnContent="On" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                            <StackPanel Spacing="12">
+                                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Pacing" />
+                                <Border Style="{StaticResource SettingRowBorder}">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE8C6;" Style="{StaticResource SettingIcon}" />
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Spacing="2">
+                                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Cut dead air" />
+                                            <TextBlock Style="{StaticResource HintText}" Text="Trims long pauses and filler words; keeps screen demos (pauses under 2 seconds)." />
+                                        </StackPanel>
+                                        <ToggleSwitch
+                                            Grid.Column="2"
+                                            MinWidth="0"
+                                            AutomationProperties.Name="Cut dead air and filler words"
+                                            IsOn="{x:Bind ViewModel.CutDeadAir, Mode=TwoWay}"
+                                            OffContent="Off"
+                                            OnContent="On" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                            <StackPanel Spacing="12">
+                                <Grid>
+                                    <TextBlock Style="{StaticResource SectionHeaderText}" Text="Video speed" />
+                                    <TextBlock
+                                        HorizontalAlignment="Right"
+                                        Style="{StaticResource HintText}"
+                                        Text="All clips in this job" />
+                                </Grid>
+                                <ItemsRepeater ItemTemplate="{StaticResource ValueTile}" ItemsSource="{x:Bind ViewModel.Speed.Items}">
+                                    <ItemsRepeater.Layout>
+                                        <UniformGridLayout
+                                            ItemsStretch="Fill"
+                                            MaximumRowsOrColumns="6"
+                                            MinColumnSpacing="10"
+                                            MinItemWidth="112"
+                                            MinRowSpacing="10" />
+                                    </ItemsRepeater.Layout>
+                                </ItemsRepeater>
+                                <TextBlock Style="{StaticResource HintText}" Text="Speeds up every exported clip, keeping the voice's pitch natural and captions in sync. Faster clips are shorter." />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!--  3 · Clips  -->
+                        <StackPanel Spacing="{StaticResource SectionSpacing}" Visibility="{x:Bind views:Format.IsStep(ViewModel.Step, 2), Mode=OneWay}">
+                            <StackPanel Spacing="12">
+                                <Grid>
+                                    <TextBlock Style="{StaticResource SectionHeaderText}" Text="What to clip" />
+                                    <TextBlock
+                                        HorizontalAlignment="Right"
+                                        Style="{StaticResource HintText}"
+                                        Text="Optional" />
+                                </Grid>
+                                <TextBox
+                                    MinHeight="96"
+                                    AcceptsReturn="True"
+                                    AutomationProperties.Name="What to clip"
+                                    MaxLength="500"
+                                    PlaceholderText="For example: every time they talk about pricing, or the funniest reactions"
+                                    Text="{x:Bind ViewModel.ClipRequest, Mode=TwoWay}"
+                                    TextWrapping="Wrap" />
+                                <TextBlock Style="{StaticResource HintText}" Text="Only moments that mention it are clipped, so you may get fewer clips, or none. Leave blank for the best moments." />
+                            </StackPanel>
+                            <StackPanel Spacing="12">
+                                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Spoken language" />
+                                <ItemsRepeater ItemTemplate="{StaticResource TextTile}" ItemsSource="{x:Bind ViewModel.Language.Items}">
+                                    <ItemsRepeater.Layout>
+                                        <UniformGridLayout
+                                            ItemsStretch="Fill"
+                                            MaximumRowsOrColumns="4"
+                                            MinColumnSpacing="12"
+                                            MinItemWidth="190"
+                                            MinRowSpacing="12" />
+                                    </ItemsRepeater.Layout>
+                                </ItemsRepeater>
+                                <TextBlock Style="{StaticResource HintText}" Text="Transcribed on this computer with whisper.cpp. Install models in Settings › Speech models." />
+                            </StackPanel>
+                            <StackPanel Spacing="12">
+                                <Grid>
+                                    <TextBlock Style="{StaticResource SectionHeaderText}" Text="Clip length" />
+                                    <TextBlock
+                                        HorizontalAlignment="Right"
+                                        Style="{StaticResource HintText}"
+                                        Text="{x:Bind ViewModel.LengthAside, Mode=OneWay}" />
+                                </Grid>
+                                <ItemsRepeater ItemTemplate="{StaticResource ValueTile}" ItemsSource="{x:Bind ViewModel.ClipLength.Items}">
+                                    <ItemsRepeater.Layout>
+                                        <UniformGridLayout
+                                            ItemsStretch="Fill"
+                                            MaximumRowsOrColumns="4"
+                                            MinColumnSpacing="10"
+                                            MinItemWidth="150"
+                                            MinRowSpacing="10" />
+                                    </ItemsRepeater.Layout>
+                                </ItemsRepeater>
+                                <TextBlock
+                                    Style="{StaticResource HintText}"
+                                    Text="{x:Bind ViewModel.SpeedNote, Mode=OneWay}"
+                                    Visibility="{x:Bind views:Format.Has(ViewModel.SpeedNote), Mode=OneWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="12">
+                                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Number of clips" />
+                                <Border Style="{StaticResource SettingRowBorder}">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE8FD;" Style="{StaticResource SettingIcon}" />
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Spacing="2">
+                                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Let Clipingo decide" />
+                                            <TextBlock Style="{StaticResource HintText}" Text="Every moment worth posting, about one per 50 seconds at most." />
+                                        </StackPanel>
+                                        <ToggleSwitch
+                                            Grid.Column="2"
+                                            MinWidth="0"
+                                            AutomationProperties.Name="Let Clipingo decide how many clips"
+                                            IsOn="{x:Bind ViewModel.AutoClipCount, Mode=TwoWay}"
+                                            OffContent="Off"
+                                            OnContent="On" />
+                                    </Grid>
+                                </Border>
+                                <NumberBox
+                                    Width="220"
+                                    HorizontalAlignment="Left"
+                                    AutomationProperties.Name="Maximum clips"
+                                    Header="Maximum clips"
+                                    Maximum="100"
+                                    Minimum="1"
+                                    SpinButtonPlacementMode="Inline"
+                                    Visibility="{x:Bind views:Format.Not(ViewModel.AutoClipCount), Mode=OneWay}"
+                                    Value="{x:Bind ViewModel.MaxClips, Mode=TwoWay}" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!--  4 · Captions  -->
+                        <StackPanel Spacing="{StaticResource SectionSpacing}" Visibility="{x:Bind views:Format.IsStep(ViewModel.Step, 3), Mode=OneWay}">
+                            <StackPanel Spacing="4">
+                                <Border Style="{StaticResource SettingRowBorder}">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE8D2;" Style="{StaticResource SettingIcon}" />
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Spacing="2">
+                                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Show title at the top" />
+                                            <TextBlock Style="{StaticResource HintText}" Text="Each clip's title over the video. Turn off to leave it out." />
+                                        </StackPanel>
+                                        <ToggleSwitch
+                                            Grid.Column="2"
+                                            MinWidth="0"
+                                            AutomationProperties.Name="Title at the top"
+                                            IsOn="{x:Bind ViewModel.IncludeTitle, Mode=TwoWay}"
+                                            OffContent="Off"
+                                            OnContent="On" />
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SettingRowBorder}">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE7F0;" Style="{StaticResource SettingIcon}" />
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Spacing="2">
+                                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Burn in captions" />
+                                            <TextBlock Style="{StaticResource HintText}" Text="Word-by-word captions in the video. The .srt for Premiere is written either way." />
+                                        </StackPanel>
+                                        <ToggleSwitch
+                                            Grid.Column="2"
+                                            MinWidth="0"
+                                            AutomationProperties.Name="Captions"
+                                            IsOn="{x:Bind ViewModel.BurnCaptions, Mode=TwoWay}"
+                                            OffContent="Off"
+                                            OnContent="On" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                            <StackPanel
+                                IsHitTestVisible="{x:Bind ViewModel.BurnCaptions, Mode=OneWay}"
+                                Opacity="{x:Bind views:Format.Dim(ViewModel.BurnCaptions), Mode=OneWay}"
+                                Spacing="12">
+                                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Caption style" />
+                                <ItemsRepeater ItemTemplate="{StaticResource CaptionTile}" ItemsSource="{x:Bind ViewModel.CaptionStyle.Items}">
+                                    <ItemsRepeater.Layout>
+                                        <UniformGridLayout
+                                            ItemsStretch="Fill"
+                                            MaximumRowsOrColumns="4"
+                                            MinColumnSpacing="12"
+                                            MinItemWidth="196"
+                                            MinRowSpacing="12" />
+                                    </ItemsRepeater.Layout>
+                                </ItemsRepeater>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!--  5 · Review  -->
+                        <StackPanel Spacing="16" Visibility="{x:Bind views:Format.IsStep(ViewModel.Step, 4), Mode=OneWay}">
+                            <Border
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource OverlayCornerRadius}">
+                                <ItemsControl ItemTemplate="{StaticResource ReviewRowTemplate}" ItemsSource="{x:Bind ViewModel.ReviewRows, Mode=OneWay}" />
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon
+                                    FontSize="14"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Glyph="&#xE946;" />
+                                <TextBlock Style="{StaticResource HintText}" Text="{x:Bind ViewModel.QueueNote, Mode=OneWay}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!--  After Generate  -->
+                <Border
+                    Padding="32,48"
+                    Style="{StaticResource PanelBorder}"
+                    Visibility="{x:Bind views:Format.Not(ViewModel.IsEditing), Mode=OneWay}">
+                    <StackPanel HorizontalAlignment="Center" Spacing="8">
+                        <Border
+                            Width="56"
+                            Height="56"
+                            HorizontalAlignment="Center"
+                            Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                            CornerRadius="28">
+                            <FontIcon
+                                FontSize="24"
+                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                Glyph="&#xE73E;" />
+                        </Border>
+                        <TextBlock
+                            Margin="0,12,0,0"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource SubtitleTextBlockStyle}"
+                            Text="Clipping started" />
+                        <TextBlock
+                            MaxWidth="560"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource BodyStrongTextBlockStyle}"
+                            Text="{x:Bind ViewModel.StartedJob.Title, Mode=OneWay}"
+                            TextAlignment="Center" />
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource DescriptionText}"
+                            Text="It keeps running while you queue more videos or use the rest of Clipingo." />
+                        <StackPanel
+                            Margin="0,20,0,0"
+                            HorizontalAlignment="Center"
+                            Orientation="Horizontal"
+                            Spacing="8">
+                            <Button
+                                AutomationProperties.Name="Clip another video"
+                                Command="{x:Bind ViewModel.StartAnotherCommand}"
+                                Style="{StaticResource PillAccentButton}">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon FontSize="14" Glyph="&#xE710;" />
+                                    <TextBlock Text="Clip another video" />
+                                </StackPanel>
+                            </Button>
+                            <Button AutomationProperties.Name="View job" Click="ViewJob_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon FontSize="14" Glyph="&#xE8FD;" />
+                                    <TextBlock Text="View job" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
-        </StackPanel>
-    </ScrollViewer>
+        </ScrollViewer>
+
+        <!--  Actions pinned at the bottom on a glass bar.  -->
+        <Border
+            Grid.Row="1"
+            Background="{ThemeResource GlassBarBrush}"
+            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+            BorderThickness="0,1,0,0"
+            Visibility="{x:Bind ViewModel.IsEditing, Mode=OneWay}">
+            <Grid
+                MaxWidth="{StaticResource PageMaxWidth}"
+                Padding="56,14,56,14"
+                ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button
+                    AutomationProperties.Name="Back"
+                    Command="{x:Bind ViewModel.BackCommand}"
+                    Visibility="{x:Bind ViewModel.HasBack, Mode=OneWay}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="12" Glyph="&#xE72B;" />
+                        <TextBlock Text="Back" />
+                    </StackPanel>
+                </Button>
+                <TextBlock
+                    Grid.Column="1"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Style="{StaticResource HintText}"
+                    Text="{x:Bind ViewModel.FooterHint, Mode=OneWay}" />
+                <StackPanel
+                    Grid.Column="2"
+                    Orientation="Horizontal"
+                    Spacing="8">
+                    <Button
+                        AutomationProperties.Name="Generate now"
+                        Command="{x:Bind ViewModel.GenerateCommand}"
+                        Content="Generate now"
+                        Visibility="{x:Bind ViewModel.ShowGenerateNow, Mode=OneWay}" />
+                    <Button
+                        AutomationProperties.Name="{x:Bind ViewModel.NextLabel, Mode=OneWay}"
+                        Command="{x:Bind ViewModel.NextCommand}"
+                        Style="{StaticResource PillAccentButton}"
+                        Visibility="{x:Bind views:Format.Not(ViewModel.IsLastStep), Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="{x:Bind ViewModel.NextLabel, Mode=OneWay}" />
+                            <FontIcon FontSize="12" Glyph="&#xE72A;" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        AutomationProperties.Name="{x:Bind ViewModel.GenerateLabel, Mode=OneWay}"
+                        Command="{x:Bind ViewModel.GenerateCommand}"
+                        Style="{StaticResource PillAccentButton}"
+                        Visibility="{x:Bind ViewModel.IsLastStep, Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon FontSize="14" Glyph="&#xE945;" />
+                            <TextBlock Text="{x:Bind ViewModel.GenerateLabel, Mode=OneWay}" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
 </Page>

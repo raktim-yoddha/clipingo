@@ -1,5 +1,6 @@
-# E2E: drive the real WinUI app through UI Automation:
-#   paste a source → Load → pick language → Find clips → untick the last candidate → Render selected.
+# E2E: drive the real WinUI app through UI Automation, Review & edit workflow:
+#   Video (workflow, source, Load) → Format → Clips (language) → Captions → Review → Find candidates →
+#   Jobs: untick the last candidate → Export selected → Done.
 # Usage: powershell -File tests/e2e/app-e2e.ps1 -Source <file-or-youtube-url> [-Language English] [-Exe <Clipingo.exe>]
 param(
     [Parameter(Mandatory)][string]$Source,
@@ -22,33 +23,38 @@ function Wait-Until([scriptblock]$cond, [int]$seconds, [string]$what) {
 }
 function Find($name) { $script:win.FindFirst($T::Descendants, (New-Object $P($A::NameProperty, $name))) }
 function Texts { @($script:win.FindAll($T::Descendants, (New-Object $P($A::ControlTypeProperty, $CT::Text))) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) }
-# Waits for the element: popups (ComboBox) briefly hide the rest of the tree while they close.
-function Invoke($name) { (Wait-Until { Find $name } 15 $name).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+function Enabled($name) { Wait-Until { $e = Find $name; if ($e -and $e.Current.IsEnabled) { $e } } 60 $name }
+function Invoke($name) { (Enabled $name).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 400 }
+# Tiles are toggle buttons; selecting one that is already on is a no-op.
+function Pick($name) {
+    $t = (Enabled $name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+    if ($t.Current.ToggleState -ne 'On') { $t.Toggle() }
+}
 
 $proc = Start-Process $Exe -PassThru
 $script:win = Wait-Until { $A::RootElement.FindFirst($T::Children, (New-Object $P($A::ProcessIdProperty, [int]$proc.Id))) } 30 'main window'
 $sw = [Diagnostics.Stopwatch]::StartNew()
 
-(Wait-Until { Find 'Video link or file path' } 15 'source box').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Source)
+Pick 'Review & edit'
+(Enabled 'Video link or file path').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Source)
 Invoke 'Load video'
-$null = Wait-Until { $f = Find 'Find clips'; if ($f -and $f.Current.IsEnabled) { $f } } 60 'video card'
-"loaded:  " + ((Texts) -join ' | ').Substring(0, [Math]::Min(200, ((Texts) -join ' | ').Length))
+Invoke 'Next: Format'
+"format:  " + (@('Vertical', 'Smart', 'Cut dead air and filler words', '1×') | ForEach-Object { if (Find $_) { $_ } }) -join ', '
+Invoke 'Next: Clips'
+Pick $Language
+Invoke 'Next: Captions'
+"captions: " + (@('Pop', 'Glow', 'Paper') | ForEach-Object { if (Find "Caption style $_") { $_ } }) -join ', '
+Invoke 'Next: Review'
+"review:  " + ((Texts | Where-Object { $_ -match '^(Workflow|Format|Language|Clips|Captions)$' }) -join ', ')
+Invoke 'Find candidates'
+Invoke 'View job'
 
-$combo = Find 'Spoken language'
-$combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
-(Wait-Until { Find $Language } 10 "language $Language").GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
-
-Invoke 'Find clips'
-$null = Wait-Until { (Texts) -contains 'Moments' } 1800 'candidates'
-$texts = Texts
-"found:   " + ($texts | Where-Object { $_ -match '^\d+ moments' })
+$null = Wait-Until { (Texts) -contains 'Pick your clips' } 1800 'candidates'
 $boxes = @($win.FindAll($T::Descendants, (New-Object $P($A::ControlTypeProperty, $CT::CheckBox))))
 "candidates: " + (($boxes | ForEach-Object { $_.Current.Name }) -join ' || ')
-if ($boxes.Count -gt 1) { $boxes[-1].GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle() }   # render all but the last
+if ($boxes.Count -gt 1) { $boxes[-1].GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle() }   # export all but the last
 
 Invoke 'Render selected clips'
-$null = Wait-Until { (Texts) -contains 'Rendered' } 1800 'rendered clips'
-$after = Texts
-$i = [array]::IndexOf($after, 'Rendered')
-"rendered: " + (($after[($i + 2)..($after.Count - 1)]) -join ' || ')
+$null = Wait-Until { (Texts) -contains 'Done' } 1800 'exported clips'
+"result:  " + ((Texts | Where-Object { $_ -match 'exported|dead air' }) -join ' || ')
 "total time: $([int]$sw.Elapsed.TotalSeconds) s"

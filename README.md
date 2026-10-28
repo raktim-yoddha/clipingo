@@ -8,7 +8,7 @@ Local-first stream clipper: a Rust core plus a native WinUI 3 app. See [PLAN.md]
 |---|---|
 | `crates/clipingo-core` | Pipeline library: system check, source probe, audio, local transcription, model manager, clip scorer, pacing, virtual camera |
 | `crates/clipd` | Daemon: JSON-RPC 2.0 (one JSON object per line) on `\\.\pipe\clipingo` / Unix socket |
-| `crates/clip` | CLI: `check`, `probe`, `score`, `transcribe`, `find`, `models` |
+| `crates/clip` | CLI: `check`, `probe`, `faces`, `score`, `transcribe`, `run`, `render`, `models` |
 | `app/Clipingo` | Windows app: WinUI 3, unpackaged Win32 .exe, Desktop Acrylic, MVVM + DI |
 
 ## Build and run (Windows)
@@ -49,17 +49,27 @@ into short chunks with Silero VAD and decoded in one whisper.cpp call; word time
 
 ### Workflow
 
-Create page: paste a file path or YouTube link → **Load** → language → **Find clips** → tick moments → format,
-dead-air and caption switches → **Render selected**. Same from the CLI:
+**Create** is a five-step wizard (BridgeClip's options, minus publishing):
+
+| Step | Options |
+|---|---|
+| Video | Workflow **Automatic** (find + export) or **Review & edit** (pick clips on Jobs), file or YouTube link, preferred part of the video |
+| Format | Vertical 9:16 / Horizontal 16:9; framing **Smart** / **Full frame** / **Classic**; AI vision check for unsure shots (Antigravity CLI); cut dead air; speed 1 / 1.1 / 1.25 / 1.5 / 1.75 / 2× |
+| Clips | What to clip (optional), spoken language, lengths 10–30s … 15–30m (any number), clip count or let Clipingo decide |
+| Captions | Title at the top, burn-in on/off, 13 caption styles (Pop, Spotlight, Impact, Glow, Boxed, Sweep, Editorial, Hype, Punch, Neon, Headline, Paper, Subtle) |
+| Review | Summary with Edit links → **Generate clips** / **Find candidates** (Ctrl+Enter from any step) |
+
+Jobs run in the background (two at a time) on **Jobs**; **Library** lists every saved run. Same from the CLI:
 
 ```bash
 cargo run -p clip -- run "https://www.youtube.com/watch?v=..." hinglish
-cargo run -p clip -- render <run-id> 1 2 3
+cargo run -p clip -- render <run-id> 1 2 3 style=glow title speed=1.25 framing=smart vision
 ```
 
 Runs live in `%LOCALAPPDATA%\Clipingo\runs\<id>` (`run.json`, `transcript.json`, downloaded `source.mp4`,
-`clips\clip_NN_9x16.{mp4,srt,xml,ass}`). Rendering cuts dead air (pauses over 2 s, fillers), frames 9:16 as the
-whole picture over a blurred fill (face tracking comes with the face detector), burns word-highlight captions,
+`clips\clip_NN_9x16.{mp4,srt,xml,ass}`). Rendering cuts dead air (pauses over 2 s, fillers), frames 9:16 (faces from
+YuNet on ONNX Runtime: Full frame follows the speaker; Smart follows a talking head or stacks screen over webcam when
+the face is small; Classic = whole frame over a blur), changes speed (pitch kept), burns captions and the title,
 normalizes loudness and encodes with the first working encoder (NVENC → QSV → AMF → MF → x264).
 
 ### End-to-end tests
@@ -79,7 +89,9 @@ powershell -File tests/e2e/app-e2e.ps1 -Source "%TEMP%\clipingo-e2e\english-stre
 | `models.list` | — | whisper-cli path, models with installed state |
 | `models.install` | `{ id: english\|hinglish\|hindi\|runtime }` | `{ path }`; streams `progress` notifications `{request, stage, done, total}` first |
 | `transcript.run` | `{ input, options?: {language: auto\|english\|hindi\|hinglish, refresh} }` | words with times, model, language |
-| `run.create` | `{ input, options?: {transcribe, find} }` file or YouTube link | saved run: source, media, transcript summary, ranked candidates; streams progress |
+| `run.create` | `{ input, options?: {transcribe, find} }` (`find` as in `scorer.find`) file or YouTube link | saved run: source, media, transcript summary, ranked candidates; streams progress |
 | `run.get` | `{ id }` | a saved run |
-| `run.render` | `{ id, ranks: [1,2], options?: {format: vertical\|horizontal, cut_dead_air, captions} }` | per clip: `.mp4`, `.srt`, Premiere `.xml`, duration, dead air removed, encoder; streams progress |
-| `scorer.find` | `{ words: [{w,s,e}], options?: {min_len,max_len,count} }` | ranked clip candidates |
+| `run.render` | `{ id, ranks: [1,2], options?: {format: vertical\|horizontal, framing: smart\|full\|classic, vision_check, cut_dead_air, captions, caption_style, title, speed} }` | per clip: `.mp4`, `.srt`, Premiere `.xml`, duration, dead air removed, encoder; streams progress |
+| `run.list` | — | saved runs, newest first, with their exported clips |
+| `captions.presets` | — | the 13 caption styles: id, name, description, font, colours |
+| `scorer.find` | `{ words: [{w,s,e}], options?: {min_len,max_len,lengths: [[min,max]],count,within: [start,end],request} }` | ranked clip candidates |

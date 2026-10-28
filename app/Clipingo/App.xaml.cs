@@ -11,7 +11,9 @@ public partial class App : Application
     public static IServiceProvider Services { get; } = new ServiceCollection()
         .AddSingleton<CoreClient>()
         .AddSingleton<Func<CoreClient>>(() => new CoreClient())
-        .AddTransient<CreateViewModel>()
+        .AddSingleton<JobsService>()
+        .AddSingleton<CreateViewModel>()
+        .AddTransient<LibraryViewModel>()
         .AddTransient<SettingsViewModel>()
         .BuildServiceProvider();
 

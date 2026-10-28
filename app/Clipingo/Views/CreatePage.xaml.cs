@@ -10,11 +10,17 @@ namespace Clipingo.Views;
 
 public sealed partial class CreatePage : Page
 {
+    /// <summary>Singleton: the draft survives navigating to Jobs and back.</summary>
     public CreateViewModel ViewModel { get; } = App.Services.GetRequiredService<CreateViewModel>();
 
     public CreatePage()
     {
         InitializeComponent();
+        ViewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CreateViewModel.Step))
+                PageScroll.ChangeView(null, 0, null, true);
+        };
     }
 
     private async void Browse_Click(object sender, RoutedEventArgs e)
@@ -42,4 +48,16 @@ public sealed partial class CreatePage : Page
         if (e.Key == VirtualKey.Enter && ViewModel.ProbeCommand.CanExecute(null))
             ViewModel.ProbeCommand.Execute(null);
     }
+
+    /// <summary>Ctrl+Enter generates from any step.</summary>
+    private void Generate_Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        if (ViewModel.IsEditing && ViewModel.GenerateCommand.CanExecute(null))
+            ViewModel.GenerateCommand.Execute(null);
+    }
+
+    private void EditRow_Click(object sender, RoutedEventArgs e) => ViewModel.GoToCommand.Execute((string)((Button)sender).Tag);
+
+    private void ViewJob_Click(object sender, RoutedEventArgs e) => App.MainWindow?.Navigate("Jobs");
 }
