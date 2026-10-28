@@ -1,0 +1,35 @@
+# Push a tag like v0.2.0 (matching <Version> in app/Clipingo/Clipingo.csproj) to publish a release with the
+# Windows installer. The app's auto-update reads the latest release's Clipingo-Setup-*.exe asset.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Check the tag matches the app version
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content app/Clipingo/Clipingo.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} does not match app version $version" }
+      - name: Test the core
+        run: cargo test --workspace
+      - name: Build the installer
+        shell: pwsh
+        run: ./installer/build.ps1
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" (Get-ChildItem target/installer/Clipingo-Setup-*.exe).FullName --title "Clipingo ${{ github.ref_name }}" --generate-notes

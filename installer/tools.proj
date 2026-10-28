@@ -1,0 +1,9 @@
+<!-- Build tools for the installer, fetched by `dotnet restore` (nothing is installed on the machine). -->
+<Project Sdk="Microsoft.Build.NoTargets/3.7.56">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageDownload Include="Tools.InnoSetup" Version="[6.4.3]" />
+  </ItemGroup>
+</Project>
