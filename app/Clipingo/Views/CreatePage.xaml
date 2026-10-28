@@ -24,20 +24,9 @@
                 AutomationProperties.Name="{x:Bind Title}"
                 IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
                 Style="{StaticResource TileToggle}">
-                <StackPanel Margin="0,0,24,0" Spacing="6">
+                <StackPanel Margin="0,0,24,0" Spacing="4">
                     <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
-                    <TextBlock
-                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
-                        Style="{StaticResource CaptionTextBlockStyle}"
-                        Text="{x:Bind Mono}" />
-                    <TextBlock
-                        Margin="0,4,0,0"
-                        Style="{StaticResource DescriptionText}"
-                        Text="{x:Bind Hint}" />
-                    <TextBlock
-                        Margin="0,6,0,0"
-                        Style="{StaticResource HintText}"
-                        Text="{x:Bind Primary}" />
+                    <TextBlock Style="{StaticResource DescriptionText}" Text="{x:Bind Hint}" />
                 </StackPanel>
             </ToggleButton>
         </DataTemplate>
@@ -440,14 +429,8 @@
                             </StackPanel>
 
                             <StackPanel Spacing="12">
-                                <StackPanel Spacing="6">
-                                    <TextBlock
-                                        AutomationProperties.HeadingLevel="Level2"
-                                        Style="{StaticResource SubtitleTextBlockStyle}"
-                                        Text="Choose a video" />
-                                    <TextBlock Style="{StaticResource DescriptionText}" Text="A local file or a YouTube link. Optionally suggest where to find clips." />
-                                </StackPanel>
-                                <Grid Margin="0,4,0,0" ColumnSpacing="8">
+                                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Video" />
+                                <Grid ColumnSpacing="8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
@@ -617,13 +600,13 @@
                                             Grid.Column="1"
                                             VerticalAlignment="Center"
                                             Spacing="2">
-                                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Check tricky shots with AI vision" />
-                                            <TextBlock Style="{StaticResource HintText}" Text="Antigravity CLI looks at shots the face detector is unsure about. Uses your Antigravity sign-in; about a minute per unsure clip." />
+                                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Double-check unsure shots" />
+                                            <TextBlock Style="{StaticResource HintText}" Text="Antigravity CLI reviews shots the face detector is unsure about. About a minute per clip." />
                                         </StackPanel>
                                         <ToggleSwitch
                                             Grid.Column="2"
                                             MinWidth="0"
-                                            AutomationProperties.Name="AI vision for smart framing"
+                                            AutomationProperties.Name="Double-check unsure shots"
                                             IsOn="{x:Bind ViewModel.VisionCheck, Mode=TwoWay}"
                                             OffContent="Off"
                                             OnContent="On" />
@@ -639,7 +622,7 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <FontIcon Glyph="&#xE8C6;" Style="{StaticResource SettingIcon}" />
+                                        <FontIcon Glyph="&#xE74F;" Style="{StaticResource SettingIcon}" />
                                         <StackPanel
                                             Grid.Column="1"
                                             VerticalAlignment="Center"
@@ -745,7 +728,7 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <FontIcon Glyph="&#xE8FD;" Style="{StaticResource SettingIcon}" />
+                                        <FontIcon Glyph="&#xE8B3;" Style="{StaticResource SettingIcon}" />
                                         <StackPanel
                                             Grid.Column="1"
                                             VerticalAlignment="Center"
@@ -977,12 +960,8 @@
                         AutomationProperties.Name="{x:Bind ViewModel.GenerateLabel, Mode=OneWay}"
                         Command="{x:Bind ViewModel.GenerateCommand}"
                         Style="{StaticResource PillAccentButton}"
-                        Visibility="{x:Bind ViewModel.IsLastStep, Mode=OneWay}">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon FontSize="14" Glyph="&#xE945;" />
-                            <TextBlock Text="{x:Bind ViewModel.GenerateLabel, Mode=OneWay}" />
-                        </StackPanel>
-                    </Button>
+                        Content="{x:Bind ViewModel.GenerateLabel, Mode=OneWay}"
+                        Visibility="{x:Bind ViewModel.IsLastStep, Mode=OneWay}" />
                 </StackPanel>
             </Grid>
         </Border>

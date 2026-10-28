@@ -12,8 +12,8 @@
         <StackPanel
             MaxWidth="{StaticResource PageMaxWidth}"
             Padding="{StaticResource PagePadding}"
-            Spacing="16">
-            <StackPanel Spacing="4">
+            Spacing="24">
+            <StackPanel Spacing="8">
                 <TextBlock
                     AutomationProperties.HeadingLevel="Level1"
                     Style="{StaticResource TitleTextBlockStyle}"
@@ -22,17 +22,18 @@
             </StackPanel>
 
             <Border
-                Padding="24,36"
+                Padding="32,56"
                 Style="{StaticResource PanelBorder}"
                 Visibility="{x:Bind views:Format.Not(HasJobs)}">
-                <StackPanel HorizontalAlignment="Center" Spacing="6">
+                <StackPanel HorizontalAlignment="Center" Spacing="4">
                     <FontIcon
                         FontSize="26"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Glyph="&#xE81E;" />
+                        Glyph="&#xE8FD;" />
                     <TextBlock
+                        Margin="0,8,0,0"
                         HorizontalAlignment="Center"
-                        FontWeight="SemiBold"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
                         Text="No jobs yet" />
                     <TextBlock
                         HorizontalAlignment="Center"
@@ -44,7 +45,7 @@
             <ItemsControl AutomationProperties.Name="Jobs" ItemsSource="{x:Bind Jobs.Jobs}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:JobItem">
-                        <Border Margin="0,0,0,12" Style="{StaticResource PanelBorder}">
+                        <Border Margin="0,0,0,16" Style="{StaticResource PanelBorder}">
                             <StackPanel Spacing="12">
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
@@ -52,22 +53,22 @@
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Spacing="3">
+                                    <StackPanel Spacing="4">
                                         <TextBlock
-                                            FontSize="15"
-                                            FontWeight="SemiBold"
+                                            Style="{StaticResource BodyLargeStrongTextBlockStyle}"
                                             Text="{x:Bind Title}"
-                                            TextTrimming="CharacterEllipsis" />
+                                            TextTrimming="CharacterEllipsis"
+                                            TextWrapping="NoWrap" />
                                         <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Summary}" />
                                     </StackPanel>
                                     <Border
                                         Grid.Column="1"
-                                        Padding="10,3"
+                                        Padding="10,4"
                                         VerticalAlignment="Top"
-                                        BorderBrush="{x:Bind views:Format.StatusBrush(IsDone, IsFailed), Mode=OneWay}"
-                                        BorderThickness="1">
+                                        Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                        CornerRadius="{StaticResource ControlCornerRadius}">
                                         <TextBlock
-                                            FontSize="12"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
                                             Foreground="{x:Bind views:Format.StatusBrush(IsDone, IsFailed), Mode=OneWay}"
                                             Text="{x:Bind StatusText, Mode=OneWay}" />
                                     </Border>
@@ -86,37 +87,33 @@
                                         IsIndeterminate="{x:Bind IsIndeterminate, Mode=OneWay}"
                                         Maximum="100"
                                         Value="{x:Bind ProgressValue, Mode=OneWay}" />
-                                    <TextBlock
-                                        FontSize="12"
-                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                        Text="{x:Bind StageText, Mode=OneWay}" />
+                                    <TextBlock Style="{StaticResource HintText}" Text="{x:Bind StageText, Mode=OneWay}" />
                                 </StackPanel>
 
                                 <TextBlock
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource DescriptionText}"
                                     Text="{x:Bind ResultText, Mode=OneWay}"
-                                    TextWrapping="Wrap"
                                     Visibility="{x:Bind views:Format.Has(ResultText), Mode=OneWay}" />
                                 <TextBlock
                                     Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                    Style="{StaticResource BodyTextBlockStyle}"
                                     Text="{x:Bind ErrorMessage, Mode=OneWay}"
-                                    TextWrapping="Wrap"
                                     Visibility="{x:Bind views:Format.Has(ErrorMessage), Mode=OneWay}" />
 
                                 <!--  Review & edit: pick the moments to export.  -->
-                                <StackPanel Spacing="8" Visibility="{x:Bind NeedsReview, Mode=OneWay}">
+                                <StackPanel Spacing="12" Visibility="{x:Bind NeedsReview, Mode=OneWay}">
                                     <TextBlock Style="{StaticResource SectionHeaderText}" Text="Moments" />
                                     <ItemsControl AutomationProperties.Name="Clip candidates" ItemsSource="{x:Bind Candidates}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="vm:CandidateItem">
                                                 <Grid
-                                                    Margin="0,0,0,8"
-                                                    Padding="12,10"
-                                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                    Margin="0,0,0,4"
+                                                    Padding="16,12"
+                                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                                     BorderThickness="1"
-                                                    ColumnSpacing="12"
-                                                    CornerRadius="{StaticResource OverlayCornerRadius}">
+                                                    ColumnSpacing="16"
+                                                    CornerRadius="{StaticResource ControlCornerRadius}">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="Auto" />
                                                         <ColumnDefinition Width="*" />
@@ -126,28 +123,23 @@
                                                         MinWidth="0"
                                                         AutomationProperties.Name="{x:Bind Title}"
                                                         IsChecked="{x:Bind IsSelected, Mode=TwoWay}" />
-                                                    <StackPanel Grid.Column="1" Spacing="2">
-                                                        <TextBlock
-                                                            FontWeight="SemiBold"
-                                                            Text="{x:Bind Title}"
-                                                            TextWrapping="Wrap" />
-                                                        <TextBlock
-                                                            FontSize="12"
-                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                            Text="{x:Bind Range}" />
+                                                    <StackPanel
+                                                        Grid.Column="1"
+                                                        VerticalAlignment="Center"
+                                                        Spacing="2">
+                                                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Title}" />
+                                                        <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Range}" />
                                                         <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Reasons}" />
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
                                                         <TextBlock
                                                             HorizontalAlignment="Center"
-                                                            FontSize="20"
-                                                            Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                            Style="{StaticResource SubtitleTextBlockStyle}"
                                                             Text="{x:Bind Score}" />
                                                         <TextBlock
                                                             HorizontalAlignment="Center"
-                                                            FontSize="11"
-                                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                                            Text="score" />
+                                                            Style="{StaticResource HintText}"
+                                                            Text="Score" />
                                                     </StackPanel>
                                                 </Grid>
                                             </DataTemplate>
@@ -157,20 +149,16 @@
                                         HorizontalAlignment="Right"
                                         AutomationProperties.Name="Render selected clips"
                                         Command="{x:Bind RenderSelectedCommand}"
-                                        Style="{StaticResource PillAccentButton}">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <FontIcon FontSize="13" Glyph="&#xE945;" />
-                                            <TextBlock Text="Export selected" />
-                                        </StackPanel>
-                                    </Button>
+                                        Content="Export selected"
+                                        Style="{StaticResource PillAccentButton}" />
                                 </StackPanel>
 
                                 <!--  Exported clips  -->
-                                <StackPanel Spacing="6" Visibility="{x:Bind IsDone, Mode=OneWay}">
+                                <StackPanel Spacing="12" Visibility="{x:Bind IsDone, Mode=OneWay}">
                                     <ItemsControl AutomationProperties.Name="Rendered clips" ItemsSource="{x:Bind Rendered}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="models:RenderedClip">
-                                                <TextBlock Margin="0,2" TextWrapping="Wrap">
+                                                <TextBlock Margin="0,4" Style="{StaticResource BodyTextBlockStyle}">
                                                     <Run FontWeight="SemiBold" Text="{x:Bind Title}" />
                                                     <Run Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind views:Format.ClipLine(DurationS, RemovedS, Encoder)}" />
                                                 </TextBlock>
@@ -182,7 +170,7 @@
                                         AutomationProperties.Name="Open output folder"
                                         Command="{x:Bind OpenFolderCommand}">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <FontIcon FontSize="13" Glyph="&#xE838;" />
+                                            <FontIcon FontSize="14" Glyph="&#xE838;" />
                                             <TextBlock Text="Open folder" />
                                         </StackPanel>
                                     </Button>

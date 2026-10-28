@@ -34,14 +34,13 @@
             PaneDisplayMode="Left"
             SelectionChanged="Nav_SelectionChanged">
             <NavigationView.MenuItems>
-                <NavigationViewItemHeader Content="STUDIO" />
                 <NavigationViewItem
                     x:Name="CreateItem"
                     AutomationProperties.Name="Create clips"
                     Content="Create"
                     Tag="Create">
                     <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE945;" />
+                        <FontIcon Glyph="&#xE8C6;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem
@@ -49,7 +48,7 @@
                     Content="Library"
                     Tag="Library">
                     <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE8B7;" />
+                        <FontIcon Glyph="&#xE8F1;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem
@@ -58,10 +57,11 @@
                     Content="Jobs"
                     Tag="Jobs">
                     <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE81E;" />
+                        <FontIcon Glyph="&#xE8FD;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItemHeader Content="WORKSPACE" />
+            </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
                 <NavigationViewItem
                     AutomationProperties.Name="Settings"
                     Content="Settings"
@@ -70,7 +70,7 @@
                         <FontIcon Glyph="&#xE713;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-            </NavigationView.MenuItems>
+            </NavigationView.FooterMenuItems>
             <Frame x:Name="ContentFrame" />
         </NavigationView>
     </Grid>

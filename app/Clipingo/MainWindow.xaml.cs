@@ -30,7 +30,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>Selects a sidebar page by its tag ("Create", "Library", "Jobs", "Settings").</summary>
     public void Navigate(string tag) =>
-        Nav.SelectedItem = Nav.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == tag);
+        Nav.SelectedItem = Nav.MenuItems.Concat(Nav.FooterMenuItems).OfType<NavigationViewItem>().First(i => (string)i.Tag == tag);
 
     private void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {

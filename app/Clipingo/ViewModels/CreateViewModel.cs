@@ -46,8 +46,8 @@ public partial class CreateViewModel : ObservableObject
         _core = core;
         _jobs = jobs;
         Workflow = new OptionGroup(false,
-            new OptionItem("automatic", "Automatic", "Beginner friendly", "Finds the moments, cuts them and exports your clips for you.") { Primary = "Find → Cut → Export" },
-            new OptionItem("review", "Review & edit", "For advanced users", "Scores every moment; you choose which clips to export.") { Primary = "Find → You pick → Export" });
+            new OptionItem("automatic", "Automatic", "", "Finds the best moments and exports them as clips."),
+            new OptionItem("review", "Review & edit", "", "Scores every moment, then you choose which ones to export."));
         AspectRatio = new OptionGroup(false,
             new OptionItem("vertical", "Vertical", "9:16", "Shorts, Reels, TikTok"),
             new OptionItem("horizontal", "Horizontal", "16:9", "YouTube, X, LinkedIn"));
@@ -298,7 +298,7 @@ public partial class CreateViewModel : ObservableObject
             var range = PreferRange && RangeError.Length == 0 && (RangeStart.Length > 0 || RangeEnd.Length > 0)
                 ? $" · {(RangeStart.Length > 0 ? RangeStart : "start")} to {(RangeEnd.Length > 0 ? RangeEnd : "end")}"
                 : "";
-            var framing = IsVertical ? $"{Framing.SelectedItem?.Title} framing{(IsSmartFraming && VisionCheck ? " · AI vision" : "")}" : "Whole frame";
+            var framing = IsVertical ? $"{Framing.SelectedItem?.Title} framing{(IsSmartFraming && VisionCheck ? " · unsure shots double-checked" : "")}" : "Whole frame";
             return
             [
                 new("Workflow", Workflow.Selected == "review" ? "Review & edit · pick clips before export" : "Automatic", "0"),

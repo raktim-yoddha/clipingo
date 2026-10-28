@@ -8,31 +8,45 @@
     xmlns:vm="using:Clipingo.ViewModels"
     Background="Transparent">
 
-    <!--  Short, fixed lists: ItemsControl inside one ScrollViewer instead of nested scrolling ListViews.  -->
+    <!--  Windows Settings layout: page title, section headers, one card per row (4 px apart).  -->
     <ScrollViewer>
-        <StackPanel MaxWidth="880" Padding="36,24" Spacing="12">
-            <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="Settings" />
+        <StackPanel
+            MaxWidth="{StaticResource PageMaxWidth}"
+            Padding="{StaticResource PagePadding}"
+            Spacing="24">
+            <TextBlock
+                AutomationProperties.HeadingLevel="Level1"
+                Style="{StaticResource TitleTextBlockStyle}"
+                Text="Settings" />
 
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel Spacing="2">
-                    <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="System check" />
-                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind ViewModel.Summary, Mode=OneWay}" />
-                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind ViewModel.GpuSummary, Mode=OneWay}" />
-                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind ViewModel.EncoderSummary, Mode=OneWay}" />
-                </StackPanel>
-                <Button
-                    Grid.Column="1"
-                    VerticalAlignment="Top"
-                    AutomationProperties.Name="Run system check again"
-                    Command="{x:Bind ViewModel.CheckCommand}"
-                    Content="Check again" />
-            </Grid>
-
-            <ProgressBar IsIndeterminate="True" Visibility="{x:Bind ViewModel.CheckCommand.IsRunning, Mode=OneWay}" />
+            <StackPanel Spacing="4">
+                <TextBlock Style="{StaticResource SectionHeaderText}" Text="System check" />
+                <Border Style="{StaticResource SettingRowBorder}">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Glyph="&#xE7F4;" Style="{StaticResource SettingIcon}" />
+                        <StackPanel
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Spacing="2">
+                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind ViewModel.Summary, Mode=OneWay}" />
+                            <TextBlock Style="{StaticResource HintText}" Text="{x:Bind ViewModel.GpuSummary, Mode=OneWay}" />
+                            <TextBlock Style="{StaticResource HintText}" Text="{x:Bind ViewModel.EncoderSummary, Mode=OneWay}" />
+                        </StackPanel>
+                        <Button
+                            Grid.Column="2"
+                            VerticalAlignment="Center"
+                            AutomationProperties.Name="Run system check again"
+                            Command="{x:Bind ViewModel.CheckCommand}"
+                            Content="Check again" />
+                    </Grid>
+                </Border>
+                <ProgressBar IsIndeterminate="True" Visibility="{x:Bind ViewModel.CheckCommand.IsRunning, Mode=OneWay}" />
+            </StackPanel>
 
             <InfoBar
                 Title="System check failed"
@@ -48,152 +62,176 @@
                 Message="{x:Bind ViewModel.DriverHint, Mode=OneWay}"
                 Severity="Warning" />
 
-            <TextBlock Margin="0,12,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Speech models (local, no cloud)" />
-            <ItemsControl AutomationProperties.Name="Speech models" ItemsSource="{x:Bind ViewModel.SpeechModels}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:SpeechModelItem">
-                        <Grid Padding="0,8" ColumnSpacing="12" RowSpacing="4">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <FontIcon
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                Glyph="&#xE73E;"
-                                Visibility="{x:Bind Installed, Mode=OneWay}" />
-                            <FontIcon
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Glyph="&#xE896;"
-                                Visibility="{x:Bind views:Format.Not(Installed), Mode=OneWay}" />
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Label}" />
-                                <TextBlock
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="{x:Bind Detail}"
-                                    TextTrimming="CharacterEllipsis" />
-                                <TextBlock
-                                    Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                                    Text="{x:Bind ErrorMessage, Mode=OneWay}"
-                                    TextWrapping="Wrap" />
-                            </StackPanel>
-                            <Button
-                                Grid.Column="2"
-                                VerticalAlignment="Center"
-                                AutomationProperties.Name="{x:Bind views:Format.InstallName(Label)}"
-                                Command="{x:Bind InstallCommand}"
-                                Content="Install"
-                                Visibility="{x:Bind CanInstall, Mode=OneWay}" />
-                            <TextBlock
-                                Grid.Column="2"
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="{x:Bind StateText, Mode=OneWay}"
-                                Visibility="{x:Bind Installed, Mode=OneWay}" />
-                            <StackPanel
-                                Grid.Row="1"
-                                Grid.Column="1"
-                                Grid.ColumnSpan="2"
-                                Spacing="2"
-                                Visibility="{x:Bind InstallCommand.IsRunning, Mode=OneWay}">
-                                <ProgressBar
-                                    IsIndeterminate="{x:Bind IsIndeterminate, Mode=OneWay}"
-                                    Maximum="100"
-                                    Value="{x:Bind ProgressValue, Mode=OneWay}" />
-                                <TextBlock
-                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="{x:Bind ProgressText, Mode=OneWay}"
-                                    TextWrapping="Wrap" />
-                            </StackPanel>
-                        </Grid>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+            <StackPanel Spacing="4">
+                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Speech models" />
+                <ItemsControl AutomationProperties.Name="Speech models" ItemsSource="{x:Bind ViewModel.SpeechModels}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SpeechModelItem">
+                            <Border Margin="0,0,0,4" Style="{StaticResource SettingRowBorder}">
+                                <Grid ColumnSpacing="16" RowSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <FontIcon Glyph="&#xE720;" Style="{StaticResource SettingIcon}" />
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Spacing="2">
+                                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Label}" />
+                                        <TextBlock
+                                            Style="{StaticResource HintText}"
+                                            Text="{x:Bind Detail}"
+                                            TextTrimming="CharacterEllipsis"
+                                            TextWrapping="NoWrap" />
+                                        <TextBlock
+                                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                            Style="{StaticResource HintText}"
+                                            Text="{x:Bind ErrorMessage, Mode=OneWay}"
+                                            Visibility="{x:Bind views:Format.Has(ErrorMessage), Mode=OneWay}" />
+                                    </StackPanel>
+                                    <Button
+                                        Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.Name="{x:Bind views:Format.InstallName(Label)}"
+                                        Command="{x:Bind InstallCommand}"
+                                        Content="Install"
+                                        Visibility="{x:Bind CanInstall, Mode=OneWay}" />
+                                    <StackPanel
+                                        Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        Visibility="{x:Bind Installed, Mode=OneWay}">
+                                        <FontIcon
+                                            FontSize="14"
+                                            Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                            Glyph="&#xE73E;" />
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource BodyTextBlockStyle}"
+                                            Text="{x:Bind StateText, Mode=OneWay}" />
+                                    </StackPanel>
+                                    <StackPanel
+                                        Grid.Row="1"
+                                        Grid.Column="1"
+                                        Grid.ColumnSpan="2"
+                                        Spacing="4"
+                                        Visibility="{x:Bind InstallCommand.IsRunning, Mode=OneWay}">
+                                        <ProgressBar
+                                            IsIndeterminate="{x:Bind IsIndeterminate, Mode=OneWay}"
+                                            Maximum="100"
+                                            Value="{x:Bind ProgressValue, Mode=OneWay}" />
+                                        <TextBlock Style="{StaticResource HintText}" Text="{x:Bind ProgressText, Mode=OneWay}" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Style="{StaticResource HintText}" Text="Speech is transcribed on this computer. No audio leaves it." />
+            </StackPanel>
 
-            <TextBlock Margin="0,12,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Tools" />
-            <ItemsControl AutomationProperties.Name="Tools" ItemsSource="{x:Bind ViewModel.Tools}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="models:ToolStatus">
-                        <Grid Padding="0,8" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                Glyph="&#xE73E;"
-                                Visibility="{x:Bind Found}" />
-                            <FontIcon
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                                Glyph="&#xE7BA;"
-                                Visibility="{x:Bind views:Format.Not(Found)}" />
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Name}" />
-                                <TextBlock
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="{x:Bind Purpose}"
-                                    TextWrapping="Wrap" />
-                                <TextBlock
-                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="{x:Bind Version}"
-                                    TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                            <TextBlock
-                                Grid.Column="2"
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="{x:Bind views:Format.ToolState(Found, Required)}" />
-                        </Grid>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+            <StackPanel Spacing="4">
+                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Tools" />
+                <ItemsControl AutomationProperties.Name="Tools" ItemsSource="{x:Bind ViewModel.Tools}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:ToolStatus">
+                            <Border Margin="0,0,0,4" Style="{StaticResource SettingRowBorder}">
+                                <Grid ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon
+                                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                        Glyph="&#xE73E;"
+                                        Style="{StaticResource SettingIcon}"
+                                        Visibility="{x:Bind Found}" />
+                                    <FontIcon
+                                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                        Glyph="&#xE7BA;"
+                                        Style="{StaticResource SettingIcon}"
+                                        Visibility="{x:Bind views:Format.Not(Found)}" />
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Spacing="2">
+                                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Name}" />
+                                        <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Purpose}" />
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                            Style="{StaticResource HintText}"
+                                            Text="{x:Bind Version}"
+                                            TextTrimming="CharacterEllipsis"
+                                            TextWrapping="NoWrap" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Style="{StaticResource BodyTextBlockStyle}"
+                                        Text="{x:Bind views:Format.ToolState(Found, Required)}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
 
-            <TextBlock Margin="0,12,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" Text="Video encoders (tried in this order)" />
-            <ItemsControl AutomationProperties.Name="Video encoders" ItemsSource="{x:Bind ViewModel.Encoders}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="models:EncoderStatus">
-                        <Grid Padding="0,8" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                Glyph="&#xE73E;"
-                                Visibility="{x:Bind Works}" />
-                            <FontIcon
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Glyph="&#xE711;"
-                                Visibility="{x:Bind views:Format.Not(Works)}" />
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Label}" />
-                                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind Name}" />
-                                <TextBlock
-                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="{x:Bind Error}"
-                                    TextWrapping="Wrap" />
-                            </StackPanel>
-                            <TextBlock
-                                Grid.Column="2"
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="{x:Bind views:Format.EncoderState(Works)}" />
-                        </Grid>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+            <StackPanel Spacing="4">
+                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Video encoders" />
+                <ItemsControl AutomationProperties.Name="Video encoders" ItemsSource="{x:Bind ViewModel.Encoders}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:EncoderStatus">
+                            <Border Margin="0,0,0,4" Style="{StaticResource SettingRowBorder}">
+                                <Grid ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon
+                                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                        Glyph="&#xE73E;"
+                                        Style="{StaticResource SettingIcon}"
+                                        Visibility="{x:Bind Works}" />
+                                    <FontIcon
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Glyph="&#xE711;"
+                                        Style="{StaticResource SettingIcon}"
+                                        Visibility="{x:Bind views:Format.Not(Works)}" />
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Spacing="2">
+                                        <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Label}" />
+                                        <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Name}" />
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                            Style="{StaticResource HintText}"
+                                            Text="{x:Bind Error}"
+                                            Visibility="{x:Bind views:Format.Has(Error)}" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Style="{StaticResource BodyTextBlockStyle}"
+                                        Text="{x:Bind views:Format.EncoderState(Works)}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Style="{StaticResource HintText}" Text="Tried top to bottom; the first one that works encodes your clips." />
+            </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </Page>
