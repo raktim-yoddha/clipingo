@@ -11,7 +11,7 @@ pub const SAMPLE_RATE: u32 = 16_000;
 pub const ENVELOPE_RATE: f64 = 100.0;
 
 async fn ffmpeg(args: &[&str], what: &str) -> Result<()> {
-    let out = Command::new("ffmpeg")
+    let out = Command::new(crate::tools::resolve("ffmpeg"))
         .args(["-hide_banner", "-v", "error", "-y"])
         .args(args)
         .kill_on_drop(true)

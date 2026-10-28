@@ -106,6 +106,70 @@ async fn dispatch(method: &str, params: Value, id: &Value, out: &UnboundedSender
             Ok(json!(render::render_clips(&p.id, &p.ranks, &p.options, &notifier(out, id)).await?))
         }
         "run.list" => Ok(json!(pipeline::list_runs())),
+        "run.open" => {
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            let run = pipeline::load_run(&p.id)?.0;
+            let options = render::last_options(&run);
+            Ok(
+                json!({ "clips": pipeline::exported(&run), "clips_dir": run.clips_dir(), "options": options, "run": run }),
+            )
+        }
+        "run.words" => {
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+                start: f64,
+                end: f64,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(pipeline::clip_words(&p.id, p.start, p.end)?))
+        }
+        "run.edit" => {
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+                #[serde(flatten)]
+                edit: pipeline::ClipEdit,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(pipeline::edit_clip(&p.id, &p.edit)?))
+        }
+        "run.add_clip" => {
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+                start: f64,
+                end: f64,
+                title: String,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(pipeline::add_clip(&p.id, p.start, p.end, &p.title)?))
+        }
+        "run.remove_clip" => {
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+                rank: usize,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            pipeline::remove_clip(&p.id, p.rank)?;
+            Ok(json!({}))
+        }
+        "run.retext" => {
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+                start: f64,
+                end: f64,
+                text: String,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(pipeline::retext(&p.id, p.start, p.end, &p.text)?))
+        }
         "captions.presets" => Ok(json!(clipingo_core::captions::PRESETS)),
         "models.list" => Ok(json!({ "whisper_cli": models::whisper_cli(), "models": models::status() })),
         "models.install" => {

@@ -94,7 +94,7 @@ fn hint_for(encoder: &str, reason: &str, has_nvidia_gpu: bool) -> Option<String>
 }
 
 async fn probe_encoder(name: &'static str, label: &'static str, has_nvidia_gpu: bool) -> EncoderStatus {
-    let run = Command::new("ffmpeg")
+    let run = Command::new(crate::tools::resolve("ffmpeg"))
         .args(["-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30:d=1", "-frames:v", "15"])
         .args(["-c:v", name, "-f", "null", "-"])
         .kill_on_drop(true)

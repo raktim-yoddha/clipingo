@@ -1,5 +1,5 @@
 //! External command-line tools: where to find them, and installing the ones Clipingo manages
-//! (yt-dlp and its JavaScript runtime deno) into `<data_dir>/bin`.
+//! (ffmpeg + ffprobe on Windows, yt-dlp and its JavaScript runtime deno) into `<data_dir>/bin`.
 
 use std::path::PathBuf;
 
@@ -28,9 +28,11 @@ pub fn yt_dlp_base_args() -> Vec<String> {
     if deno.is_file() { vec!["--js-runtimes".into(), format!("deno:{}", deno.display())] } else { Vec::new() }
 }
 
-/// Official release URLs. yt-dlp is a single binary; deno ships as a zip.
+/// Official release URLs. yt-dlp is a single binary; deno and ffmpeg ship as zips.
 fn release_url(name: &str) -> Option<&'static str> {
     match (name, std::env::consts::OS, std::env::consts::ARCH) {
+        // gyan.dev "essentials": libass, loudnorm and the NVENC / QSV / AMF / MF encoders, ~100 MB.
+        ("ffmpeg", "windows", "x86_64") => Some("https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"),
         ("yt-dlp", "windows", _) => Some("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"),
         ("yt-dlp", "macos", _) => Some("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"),
         ("yt-dlp", "linux", "x86_64") => Some("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"),
@@ -50,16 +52,16 @@ fn release_url(name: &str) -> Option<&'static str> {
     }
 }
 
-/// Install anything the app manages: "runtime" (whisper.cpp), "yt-dlp", "deno", or a speech model id.
+/// Install anything the app manages: "runtime" (whisper.cpp), "ffmpeg", "yt-dlp", "deno", or a speech model id.
 pub async fn install_component(id: &str, progress: ProgressFn<'_>) -> Result<PathBuf> {
     match id {
         "runtime" => crate::models::install_runtime(progress).await,
-        "yt-dlp" | "deno" => install(id, progress).await,
+        "ffmpeg" | "yt-dlp" | "deno" => install(id, progress).await,
         model => crate::models::install(model, progress).await,
     }
 }
 
-/// Install `yt-dlp` or `deno` into the bin folder; returns the executable path.
+/// Install `ffmpeg` (with ffprobe), `yt-dlp` or `deno` into the bin folder; returns the executable path.
 pub async fn install(name: &str, progress: ProgressFn<'_>) -> Result<PathBuf> {
     let target = bin_dir().join(exe(name));
     if target.is_file() {
@@ -70,14 +72,14 @@ pub async fn install(name: &str, progress: ProgressFn<'_>) -> Result<PathBuf> {
     if url.ends_with(".zip") {
         let zip =
             download(url, &crate::data_dir().join("downloads").join(format!("{name}.zip")), name, progress).await?;
-        let out = Command::new("tar")
-            .arg("-xf")
-            .arg(&zip)
-            .arg("-C")
-            .arg(bin_dir())
-            .output()
-            .await
-            .context("could not run tar")?;
+        std::fs::create_dir_all(bin_dir())?;
+        let mut tar = Command::new("tar");
+        tar.arg("-xf").arg(&zip).arg("-C").arg(bin_dir());
+        if name == "ffmpeg" {
+            // ffmpeg-<version>-essentials_build/bin/ff*.exe → bin/
+            tar.args(["--strip-components", "2", "*/bin/ffmpeg.exe", "*/bin/ffprobe.exe"]);
+        }
+        let out = tar.output().await.context("could not run tar")?;
         if !out.status.success() {
             bail!("unpacking {name} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
         }

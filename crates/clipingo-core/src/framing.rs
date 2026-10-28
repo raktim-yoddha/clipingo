@@ -72,15 +72,17 @@ fn best_face(cls: [&[f32]; 3], obj: [&[f32]; 3], bbox: [&[f32]; 3]) -> Option<(f
 pub fn detect(model: &Path, media: &Path, start: f64, end: f64, src: (u32, u32)) -> Result<Vec<Face>> {
     // ort's builder errors carry the builder (not Send), so they are flattened to text.
     let ort_err = |e: &dyn std::fmt::Display| anyhow::anyhow!("face detector: {e}");
-    let env = ort::init().build().map_err(|e| ort_err(&e))?;
-    let builder = ort::session::Session::builder(&env).map_err(|e| ort_err(&e))?;
+    // ONNX Runtime allows one environment per process, ever (even after it is dropped): build it once, share it.
+    static ENV: std::sync::OnceLock<Result<ort::environment::Environment, String>> = std::sync::OnceLock::new();
+    let env = ENV.get_or_init(|| ort::init().build().map_err(|e| e.to_string())).as_ref().map_err(|e| ort_err(e))?;
+    let builder = ort::session::Session::builder(env).map_err(|e| ort_err(&e))?;
     let mut builder = builder.with_intra_threads(4).map_err(|e| ort_err(&e))?;
     let mut session = builder.commit_from_file(model).map_err(|e| ort_err(&e))?;
     let vf = format!(
         "fps={},scale={SIDE}:{SIDE}:force_original_aspect_ratio=decrease,pad={SIDE}:{SIDE}:0:0",
         camera::ANALYSIS_FPS
     );
-    let mut child = Command::new("ffmpeg")
+    let mut child = Command::new(crate::tools::resolve("ffmpeg"))
         .args(["-hide_banner", "-v", "error", "-ss", &format!("{start:.3}"), "-to", &format!("{end:.3}"), "-i"])
         .arg(media)
         .args(["-an", "-vf", &vf, "-pix_fmt", "bgr24", "-f", "rawvideo", "pipe:1"])

@@ -103,7 +103,7 @@ async fn probe_youtube(url: &str) -> Result<SourceInfo> {
 async fn probe_file(path: &Path) -> Result<SourceInfo> {
     let path = path.canonicalize().context("cannot resolve file path")?;
     let v = run_json(
-        Command::new("ffprobe")
+        Command::new(crate::tools::resolve("ffprobe"))
             .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
             .arg(&path),
         "ffprobe",

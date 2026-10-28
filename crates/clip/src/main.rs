@@ -76,7 +76,7 @@ async fn install(id: &str) -> Result<serde_json::Value> {
     let progress = |p: Progress| print_progress(p);
     let mut done = serde_json::Map::new();
     let ids: Vec<&str> = if id == "all" {
-        ["runtime", "yt-dlp", "deno"].into_iter().chain(models::MODELS.iter().map(|m| m.id)).collect()
+        ["ffmpeg", "runtime", "yt-dlp", "deno"].into_iter().chain(models::MODELS.iter().map(|m| m.id)).collect()
     } else {
         vec![id]
     };

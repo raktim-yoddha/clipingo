@@ -118,16 +118,55 @@ fn ass_escape(s: &str) -> String {
     s.replace('\\', "\u{29F5}").replace('{', "(").replace('}', ")")
 }
 
+/// Where captions sit on the frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Position {
+    Top,
+    Middle,
+    /// Lower third (above the platforms' bottom UI on 9:16).
+    #[default]
+    Bottom,
+}
+
+/// Caption placement: position and a size multiplier (0.6–1.6, 1 = the preset's size).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placement {
+    pub position: Position,
+    pub scale: f64,
+}
+
+impl Default for Placement {
+    fn default() -> Self {
+        Self { position: Position::Bottom, scale: 1.0 }
+    }
+}
+
 /// Word-by-word captions in `style` (see `PRESETS`), plus an optional title `(text, clip length)` at the top.
 /// Pass no words for a title-only overlay.
-pub fn ass(words: &[Word], width: u32, height: u32, style: &Preset, title: Option<(&str, f64)>) -> String {
+pub fn ass(
+    words: &[Word],
+    width: u32,
+    height: u32,
+    style: &Preset,
+    place: Placement,
+    title: Option<(&str, f64)>,
+) -> String {
     let vertical = height > width;
     let devanagari = words.iter().any(|w| is_devanagari(&w.text));
     let font = if devanagari { "Nirmala UI" } else { style.font };
     let italic = if style.italic && !devanagari { -1 } else { 0 };
-    let size = if vertical { style.size } else { style.size * 3 / 4 };
+    let base_size = if vertical { style.size } else { style.size * 3 / 4 };
+    let size = (base_size as f64 * place.scale.clamp(0.6, 1.6)).round() as u32;
     let per_page = if vertical { style.words_per_page } else { (style.words_per_page * 2).min(6) };
-    let margin_v = if vertical { 560 } else { 70 };
+    // ASS numpad alignment: 2 bottom centre, 5 middle, 8 top (below the title on 9:16).
+    let (alignment, margin_v) = match (place.position, vertical) {
+        (Position::Bottom, true) => (2, 560),
+        (Position::Bottom, false) => (2, 70),
+        (Position::Middle, _) => (5, 0),
+        (Position::Top, true) => (8, 330),
+        (Position::Top, false) => (8, 130),
+    };
     let (base, hl, black) = (ass_color(style.primary), ass_color(style.highlight), "&H00000000&");
     // Sweep fills from SecondaryColour to PrimaryColour, so the highlight is the primary there.
     let (primary, secondary) = if matches!(style.look, Look::Sweep(_)) { (&hl, &base) } else { (&base, &base) };
@@ -140,7 +179,7 @@ pub fn ass(words: &[Word], width: u32, height: u32, style: &Preset, title: Optio
     let mut out = format!(
         "[Script Info]\nScriptType: v4.00+\nPlayResX: {width}\nPlayResY: {height}\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n\
          [V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n\
-         Style: Main,{font},{size},{primary},{secondary},{outline_colour},&H80000000,-1,{italic},0,0,100,100,0,0,{border_style},{outline},2,2,70,70,{margin_v},1\n\
+         Style: Main,{font},{size},{primary},{secondary},{outline_colour},&H80000000,-1,{italic},0,0,100,100,0,0,{border_style},{outline},2,{alignment},70,70,{margin_v},1\n\
          Style: Title,{title_font},{title_size},&H00FFFFFF,&H00FFFFFF,&H40000000,&H00000000,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{title_margin},1\n\n\
          [Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     );
@@ -287,7 +326,7 @@ mod tests {
     #[test]
     fn ass_highlights_each_word_and_escapes_markup() {
         let words = [w("hello", 0.0, 0.4), w("{evil}", 0.5, 0.9)];
-        let a = ass(&words, 1080, 1920, preset("pop"), None);
+        let a = ass(&words, 1080, 1920, preset("pop"), Placement::default(), None);
         assert!(a.contains("PlayResY: 1920") && a.contains("Segoe UI Black"));
         let ev = events(&a);
         assert_eq!(ev.len(), 2);
@@ -302,25 +341,25 @@ mod tests {
         assert_eq!(PRESETS.len(), 13);
         assert_eq!(preset("nope").id, "pop");
 
-        let sweep = ass(&words, 1080, 1920, preset("sweep"), None);
+        let sweep = ass(&words, 1080, 1920, preset("sweep"), Placement::default(), None);
         let ev = events(&sweep);
         assert_eq!(ev.len(), 1, "one karaoke event per page");
         assert!(ev[0].contains("{\\kf50}one {\\kf40}two"), "{}", ev[0]);
 
-        let glow = ass(&words, 1080, 1920, preset("glow"), None);
+        let glow = ass(&words, 1080, 1920, preset("glow"), Placement::default(), None);
         assert_eq!(events(&glow).len(), 4, "bloom layer under each word event");
         assert!(glow.contains("\\blur12") && glow.contains("&H00FFC800&"), "cyan #00C8FF bloom");
 
-        let punch = ass(&words, 1080, 1920, preset("punch"), None);
+        let punch = ass(&words, 1080, 1920, preset("punch"), Placement::default(), None);
         assert!(punch.contains("ONE") && events(&punch).len() == 2, "one upper-case word per page");
 
-        let paper = ass(&words, 1080, 1920, preset("paper"), None);
+        let paper = ass(&words, 1080, 1920, preset("paper"), Placement::default(), None);
         assert!(paper.contains(",3,14,") && paper.contains("&H00FFFFFF&,&H80000000"), "white card box");
     }
 
     #[test]
     fn title_sits_on_top_for_the_whole_clip() {
-        let a = ass(&[], 1080, 1920, preset("pop"), Some(("Why {this} works", 31.5)));
+        let a = ass(&[], 1080, 1920, preset("pop"), Placement::default(), Some(("Why {this} works", 31.5)));
         let ev = events(&a);
         assert_eq!(ev.len(), 1);
         assert!(ev[0].starts_with("Dialogue: 2,0:00:00.00,0:00:31.50,Title,") && ev[0].ends_with("Why (this) works"));
@@ -328,7 +367,10 @@ mod tests {
 
     #[test]
     fn devanagari_switches_font() {
-        assert!(ass(&[w("क्या", 0.0, 0.5)], 1080, 1920, preset("editorial"), None).contains("Main,Nirmala UI"));
+        assert!(
+            ass(&[w("क्या", 0.0, 0.5)], 1080, 1920, preset("editorial"), Placement::default(), None)
+                .contains("Main,Nirmala UI")
+        );
     }
 
     #[test]
@@ -339,5 +381,16 @@ mod tests {
         assert!(s.starts_with("1\n00:00:00,000 --> "));
         assert!(s.contains("\n2\n") && s.contains("00:00:10,000"), "{s}");
         assert!(s.lines().all(|l| l.chars().count() <= SRT_LINE_CHARS + 10));
+    }
+
+    #[test]
+    fn placement_moves_and_scales_the_main_style() {
+        let words = [w("hi", 0.0, 0.5)];
+        let main = |place| ass(&words, 1080, 1920, preset("pop"), place, None);
+        assert!(main(Placement::default()).contains("Style: Main,Segoe UI Black,82,"));
+        let top = main(Placement { position: Position::Top, scale: 1.5 });
+        assert!(top.contains("Style: Main,Segoe UI Black,123,") && top.contains(",2,8,70,70,330,1"), "{top}");
+        let mid = main(Placement { position: Position::Middle, scale: 9.0 });
+        assert!(mid.contains(",131,") && mid.contains(",2,5,70,70,0,1"), "size clamped to 1.6×: {mid}");
     }
 }

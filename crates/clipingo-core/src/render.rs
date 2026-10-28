@@ -33,7 +33,7 @@ impl Format {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RenderOptions {
     pub format: Format,
@@ -50,6 +50,11 @@ pub struct RenderOptions {
     pub framing: Framing,
     /// Smart framing: ask Antigravity CLI about clips the face detector is unsure of.
     pub vision_check: bool,
+    pub caption_position: crate::captions::Position,
+    /// Caption size multiplier, 0.6–1.6.
+    pub caption_size: f64,
+    /// Short fade in from and out to black (video and sound).
+    pub fade: bool,
 }
 
 impl Default for RenderOptions {
@@ -63,6 +68,9 @@ impl Default for RenderOptions {
             speed: 1.0,
             framing: Framing::default(),
             vision_check: false,
+            caption_position: crate::captions::Position::Bottom,
+            caption_size: 1.0,
+            fade: false,
         }
     }
 }
@@ -157,7 +165,18 @@ fn framing_chain(format: Format, layout: Layout, faces: &[Face], duration: f64, 
 
 /// The ffmpeg filter graph: cut pieces → concat → framing (`frame_chain`) → speed → captions; audio fades at
 /// each join + loudness.
-fn filter_graph(keeps: &[(f64, f64)], seek: f64, frame_chain: &str, speed: f64, ass_file: Option<&str>) -> String {
+/// Fade length in seconds, when fades are on.
+const FADE_S: f64 = 0.4;
+
+/// `fade_over`: the output length, to fade in and out over it.
+fn filter_graph(
+    keeps: &[(f64, f64)],
+    seek: f64,
+    frame_chain: &str,
+    speed: f64,
+    ass_file: Option<&str>,
+    fade_over: Option<f64>,
+) -> String {
     let mut g = String::new();
     for (i, &(a, b)) in keeps.iter().enumerate() {
         let (a, b) = (a - seek, b - seek);
@@ -182,10 +201,21 @@ fn filter_graph(keeps: &[(f64, f64)], seek: f64, frame_chain: &str, speed: f64, 
     match ass_file {
         // Relative file name (ffmpeg runs in the clip folder) keeps drive colons out of the graph.
         // shaping=complex is required for Devanagari conjuncts (M0 spike).
-        Some(f) => g.push_str(&format!("[vl]ass=filename={f}:fontsdir={}:shaping=complex[vout];", fonts_dir())),
-        None => g.push_str("[vl]null[vout];"),
+        Some(f) => g.push_str(&format!("[vl]ass=filename={f}:fontsdir={}:shaping=complex[vo];", fonts_dir())),
+        None => g.push_str("[vl]null[vo];"),
     }
-    g.push_str("[ac]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[aout]");
+    let (vfade, afade) = match fade_over {
+        Some(len) if len > 3.0 * FADE_S => {
+            let out = len - FADE_S;
+            (
+                format!(",fade=t=in:d={FADE_S},fade=t=out:st={out:.3}:d={FADE_S}"),
+                format!(",afade=t=in:d={FADE_S},afade=t=out:st={out:.3}:d={FADE_S}"),
+            )
+        }
+        _ => (String::new(), String::new()),
+    };
+    g.push_str(&format!("[vo]null{vfade}[vout];"));
+    g.push_str(&format!("[ac]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000{afade}[aout]"));
     g
 }
 
@@ -263,7 +293,7 @@ fn premiere_xml(run: &Run, title: &str, keeps: &[(f64, f64)], format: Format) ->
 
 /// Run ffmpeg with `-progress`, reporting the share of `duration` encoded.
 async fn run_ffmpeg(args: &[String], cwd: &Path, duration: f64, stage: &str, progress: ProgressFn<'_>) -> Result<()> {
-    let mut child = Command::new("ffmpeg")
+    let mut child = Command::new(crate::tools::resolve("ffmpeg"))
         .args(["-hide_banner", "-v", "error", "-y", "-nostats", "-progress", "pipe:1"])
         .args(args)
         .current_dir(cwd)
@@ -287,7 +317,15 @@ async fn run_ffmpeg(args: &[String], cwd: &Path, duration: f64, stage: &str, pro
     Ok(())
 }
 
-/// Render the given candidates (1-based ranks) of a run into `<run>/clips`.
+/// Options of the run's last export (defaults before the first).
+pub fn last_options(run: &Run) -> RenderOptions {
+    std::fs::read(Path::new(&run.dir).join("render.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Render the given candidates (1-based ranks) of a run into its clips folder.
 pub async fn render_clips(
     run_id: &str,
     ranks: &[usize],
@@ -295,8 +333,10 @@ pub async fn render_clips(
     progress: ProgressFn<'_>,
 ) -> Result<Vec<RenderedClip>> {
     let (run, words) = pipeline::load_run(run_id)?;
-    let out_dir = Path::new(&run.dir).join("clips");
-    std::fs::create_dir_all(&out_dir)?;
+    let out_dir = run.clips_dir();
+    std::fs::create_dir_all(&out_dir).with_context(|| format!("cannot create {}", out_dir.display()))?;
+    // The editor re-exports a clip with the options the job used.
+    std::fs::write(Path::new(&run.dir).join("render.json"), serde_json::to_vec_pretty(opts)?)?;
     progress(Progress { stage: "Choosing video encoder".into(), done: 0, total: None });
     let encoder = crate::system::render_encoder().await;
     let (w, h) = opts.format.size();
@@ -324,7 +364,8 @@ pub async fn render_clips(
             let shown = if opts.captions { clip_words.as_slice() } else { &[] };
             let title = opts.title.then_some((c.title.as_str(), duration));
             let style = crate::captions::preset(&opts.caption_style);
-            std::fs::write(out_dir.join(&ass_name), crate::captions::ass(shown, w, h, style, title))?;
+            let place = crate::captions::Placement { position: opts.caption_position, scale: opts.caption_size };
+            std::fs::write(out_dir.join(&ass_name), crate::captions::ass(shown, w, h, style, place, title))?;
         }
         // ponytail: the Premiere timeline stays at 1× (no time remap yet); speed is in the MP4 only.
         let xml_path = out_dir.join(format!("{stem}.xml"));
@@ -347,7 +388,7 @@ pub async fn render_clips(
             progress(Progress { stage: format!("Checking clip #{rank} with AI vision"), done: 0, total: None });
             let frame = out_dir.join(format!("{stem}.vision.jpg"));
             let mid = format!("{:.3}", (c.start + c.end) / 2.0);
-            let grabbed = Command::new("ffmpeg")
+            let grabbed = Command::new(crate::tools::resolve("ffmpeg"))
                 .args(["-hide_banner", "-v", "error", "-y", "-ss", &mid, "-i", &run.media, "-frames:v", "1"])
                 .args(["-vf", "scale=960:-2"])
                 .arg(&frame)
@@ -366,7 +407,14 @@ pub async fn render_clips(
         let graph_name = format!("{stem}.graph.txt");
         std::fs::write(
             out_dir.join(&graph_name),
-            filter_graph(&keeps, seek, &frame_chain, speed, overlay.then_some(ass_name.as_str())),
+            filter_graph(
+                &keeps,
+                seek,
+                &frame_chain,
+                speed,
+                overlay.then_some(ass_name.as_str()),
+                opts.fade.then_some(duration),
+            ),
         )?;
         let video_name = format!("{stem}.mp4");
         let mut args: Vec<String> = vec![
@@ -391,6 +439,7 @@ pub async fn render_clips(
         let stage = format!("Rendering clip #{rank} ({encoder})");
         run_ffmpeg(&args, &out_dir, duration, &stage, progress).await?;
         std::fs::remove_file(out_dir.join(&graph_name)).ok();
+        std::fs::remove_file(out_dir.join(&ass_name)).ok();
 
         done.push(RenderedClip {
             rank,
@@ -441,14 +490,17 @@ mod tests {
     #[test]
     fn graph_has_one_trim_pair_per_piece_and_escaped_fonts() {
         let classic = framing_chain(Format::Vertical, Layout::Whole, &[], 5.0, (1920, 1080));
-        let g = filter_graph(&[(10.0, 12.0), (13.0, 15.5)], 10.0, &classic, 1.0, Some("c.ass"));
+        let g = filter_graph(&[(10.0, 12.0), (13.0, 15.5)], 10.0, &classic, 1.0, Some("c.ass"), None);
         assert_eq!(g.matches("[0:v]trim").count(), 2);
         assert!(g.contains("trim=start=3.000:end=5.500") && g.contains("concat=n=2:v=1:a=1"));
         assert!(g.contains("[vcat]split=2") && g.contains("[vf];[vf]null[vl]"), "framing then speed: {g}");
         assert!(g.contains("shaping=complex") && g.ends_with("[aout]") && !g.contains("atempo"));
         let wide = framing_chain(Format::Horizontal, Layout::Follow, &[], 5.0, (1920, 1080));
-        let fast = filter_graph(&[(0.0, 5.0)], 0.0, &wide, 1.5, None);
+        let fast = filter_graph(&[(0.0, 5.0)], 0.0, &wide, 1.5, None, None);
         assert!(fast.contains("setpts=PTS/1.5[vl]") && fast.contains("atempo=1.5[ac]"), "{fast}");
+        assert!(!fast.contains("d=0.4"), "no fades unless asked (the 12 ms de-click fades stay)");
+        let faded = filter_graph(&[(0.0, 5.0)], 0.0, &wide, 1.0, None, Some(5.0));
+        assert!(faded.contains("fade=t=out:st=4.600:d=0.4[vout]") && faded.contains("afade=t=in:d=0.4"), "{faded}");
     }
 
     #[test]
