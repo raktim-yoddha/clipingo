@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod camera;
 pub mod captions;
+pub mod framing;
 pub mod models;
 pub mod pacing;
 pub mod pipeline;

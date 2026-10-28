@@ -105,6 +105,8 @@ async fn dispatch(method: &str, params: Value, id: &Value, out: &UnboundedSender
             let p: P = serde_json::from_value(params).map_err(invalid_params)?;
             Ok(json!(render::render_clips(&p.id, &p.ranks, &p.options, &notifier(out, id)).await?))
         }
+        "run.list" => Ok(json!(pipeline::list_runs())),
+        "captions.presets" => Ok(json!(clipingo_core::captions::PRESETS)),
         "models.list" => Ok(json!({ "whisper_cli": models::whisper_cli(), "models": models::status() })),
         "models.install" => {
             /// A model id from `models.list`, "runtime" (whisper.cpp), "yt-dlp" or "deno".

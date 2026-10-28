@@ -10,3 +10,5 @@ reqwest = { version = "0.13.5", features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+# ONNX Runtime for the face detector (YuNet); the DLL is fetched at build time and copied next to the binaries.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-native", "api-31"] }

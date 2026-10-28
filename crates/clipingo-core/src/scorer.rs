@@ -221,17 +221,42 @@ fn features(s: &Sentence, loud: Option<&Loudness>) -> Features {
 
 /// What the scorer is asked for.
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
 pub struct FindOptions {
+    /// Clip length when `lengths` is empty, seconds.
     pub min_len: f64,
     pub max_len: f64,
+    /// Accepted clip lengths `(min, max)` in seconds, any of them; empty = `min_len..max_len`.
+    pub lengths: Vec<(f64, f64)>,
     /// `None` = let the scorer decide how many clips the video can carry.
     pub count: Option<usize>,
+    /// Preferred part of the source `(start, end)`: a clip's middle must fall inside.
+    pub within: Option<(f64, f64)>,
+    /// "What to clip": only moments that mention it are kept.
+    pub request: Option<String>,
 }
 
 impl Default for FindOptions {
     fn default() -> Self {
-        Self { min_len: 20.0, max_len: 60.0, count: None }
+        Self { min_len: 20.0, max_len: 60.0, lengths: Vec::new(), count: None, within: None, request: None }
     }
+}
+
+/// Content words of a "what to clip" request, as prefixes so "pricing" also matches "price".
+// ponytail: lexical match; the local-LLM planner replaces this when it lands.
+fn request_terms(request: Option<&str>) -> Vec<String> {
+    let lex = lexicon();
+    request
+        .map(norm)
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter(|w| w.chars().count() > 2 && !lex.stop.contains(w))
+        .map(|w| w.chars().take(4.max(w.chars().count().saturating_sub(3))).collect())
+        .collect()
+}
+
+fn request_hits(normalized: &str, terms: &[String]) -> f64 {
+    normalized.split_whitespace().filter(|w| terms.iter().any(|t| w.starts_with(t.as_str()))).count() as f64
 }
 
 /// A proposed clip.
@@ -293,17 +318,28 @@ pub fn find(words: &[Word], opts: &FindOptions, loud: Option<&Loudness>) -> Vec<
     let total_dur = (words[words.len() - 1].end - words[0].start).max(1.0);
     let median_wps = words.len() as f64 / total_dur;
     let sig = |x: f64| 1.0 / (1.0 + (-x).exp());
-    let target = (opts.min_len + opts.max_len) / 2.0;
+    let ranges = if opts.lengths.is_empty() { vec![(opts.min_len, opts.max_len)] } else { opts.lengths.clone() };
+    let longest = ranges.iter().map(|r| r.1).fold(0.0, f64::max);
+    let terms = request_terms(opts.request.as_deref());
+    let req: Vec<f64> = sents.iter().map(|s| request_hits(&norm(&s.text), &terms)).collect();
 
     let mut cands: Vec<Window> = Vec::new();
     for i in 0..sents.len() {
         for j in i..sents.len() {
             let (s0, e1) = (sents[i].start, sents[j].end);
             let dur = e1 - s0;
-            if dur > opts.max_len + 4.0 {
+            if dur > longest + 4.0 {
                 break;
             }
-            if dur < opts.min_len - 2.0 {
+            let Some(&(lo, hi)) = ranges.iter().find(|(lo, hi)| dur >= lo - 2.0 && dur <= hi + 4.0) else {
+                continue;
+            };
+            let target = (lo + hi) / 2.0;
+            if opts.within.is_some_and(|(a, b)| !(a..=b).contains(&((s0 + e1) / 2.0))) {
+                continue;
+            }
+            let asked: f64 = req[i..=j].iter().sum();
+            if !terms.is_empty() && asked == 0.0 {
                 continue;
             }
             let (mut emo, mut story, mut ins, mut deb, mut laugh, mut wc, mut gaps) =
@@ -371,7 +407,8 @@ pub fn find(words: &[Word], opts: &FindOptions, loud: Option<&Loudness>) -> Vec<
                 - 0.06 * gaps
                 - if fi.starts_cont && !fi.is_q { 0.05 } else { 0.0 }
                 + if ends_clean { 0.03 } else { -0.05 }
-                - if starts_ref { 0.07 } else { 0.0 };
+                - if starts_ref { 0.07 } else { 0.0 }
+                + 0.15 * (asked / 3.0).min(1.0);
             cands.push(Window {
                 i,
                 j,
@@ -543,7 +580,7 @@ mod tests {
         ]);
         lines.extend(vec![filler; 6]);
         let words = transcript(&lines, 2.5);
-        let found = find(&words, &FindOptions { min_len: 15.0, max_len: 40.0, count: None }, None);
+        let found = find(&words, &FindOptions { min_len: 15.0, max_len: 40.0, ..Default::default() }, None);
         assert!(!found.is_empty());
         let top = &found[0];
         assert!((35..=99).contains(&top.score));
@@ -551,6 +588,31 @@ mod tests {
         assert!((top.start - hook_start).abs() < 1.0, "top clip should open on the question: {top:?}");
         assert!(top.reasons.iter().any(|r| r == "Question hook"));
         assert!(top.title.starts_with("Why"));
+    }
+
+    #[test]
+    fn request_lengths_and_source_range_narrow_the_search() {
+        let filler = "and then we kind of just moved the file over to the other folder and it was fine.";
+        let mut lines = vec![filler; 8];
+        lines.extend(["Why does nobody talk about the pricing of this plan?", "Prices went up twice this year!"]);
+        lines.extend(vec![filler; 8]);
+        let words = transcript(&lines, 2.5);
+        let at = |w: &str| words.iter().find(|x| x.text == w).unwrap().start;
+
+        let asked = FindOptions { request: Some("the price".into()), ..Default::default() };
+        let found = find(&words, &asked, None);
+        assert!(
+            !found.is_empty() && found.iter().all(|c| c.start <= at("Prices") && c.end >= at("pricing")),
+            "{found:?}"
+        );
+        let none = find(&words, &FindOptions { request: Some("dragons".into()), ..Default::default() }, None);
+        assert!(none.is_empty(), "nothing mentions it: {none:?}");
+
+        let short = FindOptions { lengths: vec![(10.0, 15.0)], count: Some(5), ..Default::default() };
+        assert!(find(&words, &short, None).iter().all(|c| c.end - c.start <= 19.5));
+
+        let early = FindOptions { within: Some((0.0, 30.0)), count: Some(5), ..Default::default() };
+        assert!(find(&words, &early, None).iter().all(|c| (c.start + c.end) / 2.0 <= 30.5));
     }
 
     #[test]
@@ -566,7 +628,8 @@ mod tests {
     fn fixed_count_is_respected_without_overlap() {
         let line = "What if I told you the secret to this build is one flag?";
         let words = transcript(&vec![line; 40], 2.5);
-        let found = find(&words, &FindOptions { min_len: 15.0, max_len: 30.0, count: Some(3) }, None);
+        let found =
+            find(&words, &FindOptions { min_len: 15.0, max_len: 30.0, count: Some(3), ..Default::default() }, None);
         assert!(found.len() <= 3);
         for (a, b) in found.iter().zip(found.iter().skip(1)) {
             let overlap = a.end.min(b.end) - a.start.max(b.start);

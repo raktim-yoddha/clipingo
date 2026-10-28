@@ -9,6 +9,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::Word;
+use crate::framing::{Face, Framing, Layout};
 use crate::models::{Progress, ProgressFn};
 use crate::pacing::{self, WindowWord};
 use crate::pipeline::{self, Run};
@@ -32,23 +33,37 @@ impl Format {
     }
 }
 
-fn yes() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct RenderOptions {
-    #[serde(default)]
     pub format: Format,
-    #[serde(default = "yes")]
     pub cut_dead_air: bool,
-    #[serde(default = "yes")]
+    /// Burn word-by-word captions.
     pub captions: bool,
+    /// Caption look: an id from `captions::PRESETS`.
+    pub caption_style: String,
+    /// The clip's title over the top of the video.
+    pub title: bool,
+    /// Playback speed of the exported clip, 1–2 (pitch kept).
+    pub speed: f64,
+    /// 9:16 only.
+    pub framing: Framing,
+    /// Smart framing: ask Antigravity CLI about clips the face detector is unsure of.
+    pub vision_check: bool,
 }
 
 impl Default for RenderOptions {
     fn default() -> Self {
-        Self { format: Format::Vertical, cut_dead_air: true, captions: true }
+        Self {
+            format: Format::Vertical,
+            cut_dead_air: true,
+            captions: true,
+            caption_style: "pop".into(),
+            title: false,
+            speed: 1.0,
+            framing: Framing::default(),
+            vision_check: false,
+        }
     }
 }
 
@@ -115,8 +130,34 @@ fn encoder_args(encoder: &str) -> Vec<&'static str> {
     }
 }
 
-/// The ffmpeg filter graph: cut pieces → concat → framing → captions; audio fades at each join + loudness.
-fn filter_graph(keeps: &[(f64, f64)], seek: f64, format: Format, ass_file: Option<&str>) -> String {
+/// Source time → time in the cut clip (before speed), or `None` if that moment was cut.
+fn to_clip_time(keeps: &[(f64, f64)], t: f64) -> Option<f64> {
+    let mut offset = 0.0;
+    for &(a, b) in keeps {
+        if (a..b).contains(&t) {
+            return Some(offset + t - a);
+        }
+        offset += b - a;
+    }
+    None
+}
+
+/// `[vcat] → [vf]`: 9:16 in `layout`, or 16:9 letterboxed.
+fn framing_chain(format: Format, layout: Layout, faces: &[Face], duration: f64, src: (u32, u32)) -> String {
+    match format {
+        Format::Vertical => crate::framing::vertical_chain(layout, faces, duration, src, ("vcat", "vf")),
+        Format::Horizontal => {
+            let (w, h) = format.size();
+            format!(
+                "[vcat]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[vf];"
+            )
+        }
+    }
+}
+
+/// The ffmpeg filter graph: cut pieces → concat → framing (`frame_chain`) → speed → captions; audio fades at
+/// each join + loudness.
+fn filter_graph(keeps: &[(f64, f64)], seek: f64, frame_chain: &str, speed: f64, ass_file: Option<&str>) -> String {
     let mut g = String::new();
     for (i, &(a, b)) in keeps.iter().enumerate() {
         let (a, b) = (a - seek, b - seek);
@@ -129,17 +170,14 @@ fn filter_graph(keeps: &[(f64, f64)], seek: f64, format: Format, ass_file: Optio
     for i in 0..keeps.len() {
         g.push_str(&format!("[v{i}][a{i}]"));
     }
-    g.push_str(&format!("concat=n={}:v=1:a=1[vc][ac];", keeps.len()));
-    let (w, h) = format.size();
-    match format {
-        // Classic framing: the whole frame over a blurred, darkened fill. (Face-follow comes with the face detector.)
-        Format::Vertical => g.push_str(&format!(
-            "[vc]split=2[bg][fg];[bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},gblur=sigma=24,eq=brightness=-0.12[bgb];\
-             [fg]scale={w}:-2:flags=lanczos[fgs];[bgb][fgs]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[vl];"
-        )),
-        Format::Horizontal => g.push_str(&format!(
-            "[vc]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[vl];"
-        )),
+    g.push_str(&format!("concat=n={}:v=1:a=1[vcat][acat];", keeps.len()));
+    // Framing runs on the cut clip's timeline (its crop path is keyed to it), before the speed change.
+    g.push_str(frame_chain);
+    // atempo keeps the voice's pitch; 1–2× is inside its single-filter range.
+    if (speed - 1.0).abs() > 1e-3 {
+        g.push_str(&format!("[vf]setpts=PTS/{speed}[vl];[acat]atempo={speed}[ac];"));
+    } else {
+        g.push_str("[vf]null[vl];[acat]anull[ac];");
     }
     match ass_file {
         // Relative file name (ffmpeg runs in the clip folder) keeps drive colons out of the graph.
@@ -262,6 +300,7 @@ pub async fn render_clips(
     progress(Progress { stage: "Choosing video encoder".into(), done: 0, total: None });
     let encoder = crate::system::render_encoder().await;
     let (w, h) = opts.format.size();
+    let speed = opts.speed.clamp(1.0, 2.0);
 
     let mut done = Vec::new();
     for &rank in ranks {
@@ -270,25 +309,64 @@ pub async fn render_clips(
             .iter()
             .find(|c| c.rank == rank)
             .with_context(|| format!("no candidate #{rank} in this run"))?;
-        let (keeps, clip_words) = plan_cuts(&words, c.start, c.end, opts.cut_dead_air);
-        let duration: f64 = keeps.iter().map(|(a, b)| b - a).sum();
+        let (keeps, mut clip_words) = plan_cuts(&words, c.start, c.end, opts.cut_dead_air);
+        for w in &mut clip_words {
+            (w.start, w.end) = (w.start / speed, w.end / speed);
+        }
+        let duration = keeps.iter().map(|(a, b)| b - a).sum::<f64>() / speed;
         let stem = format!("clip_{rank:02}_{}", if opts.format == Format::Vertical { "9x16" } else { "16x9" });
 
         let srt_path = out_dir.join(format!("{stem}.srt"));
         std::fs::write(&srt_path, crate::captions::srt(&clip_words))?;
         let ass_name = format!("{stem}.ass");
-        if opts.captions {
-            std::fs::write(out_dir.join(&ass_name), crate::captions::ass(&clip_words, w, h))?;
+        let overlay = opts.captions || opts.title;
+        if overlay {
+            let shown = if opts.captions { clip_words.as_slice() } else { &[] };
+            let title = opts.title.then_some((c.title.as_str(), duration));
+            let style = crate::captions::preset(&opts.caption_style);
+            std::fs::write(out_dir.join(&ass_name), crate::captions::ass(shown, w, h, style, title))?;
         }
+        // ponytail: the Premiere timeline stays at 1× (no time remap yet); speed is in the MP4 only.
         let xml_path = out_dir.join(format!("{stem}.xml"));
         std::fs::write(&xml_path, premiere_xml(&run, &c.title, &keeps, opts.format))?;
+
+        let src = (run.media_info.width.unwrap_or(1920) as u32, run.media_info.height.unwrap_or(1080) as u32);
+        let mut faces: Vec<Face> = Vec::new();
+        if opts.format == Format::Vertical && opts.framing != Framing::Classic {
+            let model = crate::framing::model(progress).await?;
+            progress(Progress { stage: format!("Finding the speaker in clip #{rank}"), done: 0, total: None });
+            let (media, start, end) = (std::path::PathBuf::from(&run.media), c.start, c.end);
+            let found = tokio::task::spawn_blocking(move || crate::framing::detect(&model, &media, start, end, src))
+                .await
+                .context("face detection stopped")??;
+            // Onto the cut clip's timeline; faces in cut-out moments are dropped.
+            faces = found.into_iter().filter_map(|f| Some(Face { t: to_clip_time(&keeps, f.t)?, ..f })).collect();
+        }
+        let (mut layout, unsure) = crate::framing::choose(opts.framing, &faces, duration * speed);
+        if opts.format == Format::Vertical && opts.framing == Framing::Smart && opts.vision_check && unsure {
+            progress(Progress { stage: format!("Checking clip #{rank} with AI vision"), done: 0, total: None });
+            let frame = out_dir.join(format!("{stem}.vision.jpg"));
+            let mid = format!("{:.3}", (c.start + c.end) / 2.0);
+            let grabbed = Command::new("ffmpeg")
+                .args(["-hide_banner", "-v", "error", "-y", "-ss", &mid, "-i", &run.media, "-frames:v", "1"])
+                .args(["-vf", "scale=960:-2"])
+                .arg(&frame)
+                .status()
+                .await
+                .is_ok_and(|s| s.success());
+            if grabbed && let Some(seen) = crate::framing::vision_layout(&frame).await {
+                layout = seen;
+            }
+            std::fs::remove_file(&frame).ok();
+        }
+        let frame_chain = framing_chain(opts.format, layout, &faces, duration * speed, src);
 
         // Input seek (fast) to the clip start; the graph trims relative to it.
         let seek = c.start;
         let graph_name = format!("{stem}.graph.txt");
         std::fs::write(
             out_dir.join(&graph_name),
-            filter_graph(&keeps, seek, opts.format, opts.captions.then_some(ass_name.as_str())),
+            filter_graph(&keeps, seek, &frame_chain, speed, overlay.then_some(ass_name.as_str())),
         )?;
         let video_name = format!("{stem}.mp4");
         let mut args: Vec<String> = vec![
@@ -321,7 +399,7 @@ pub async fn render_clips(
             srt: srt_path.to_string_lossy().into_owned(),
             premiere_xml: xml_path.to_string_lossy().into_owned(),
             duration_s: duration,
-            removed_s: (c.end - c.start) - duration,
+            removed_s: (c.end - c.start) - duration * speed,
             encoder: encoder.to_string(),
         });
     }
@@ -362,10 +440,23 @@ mod tests {
 
     #[test]
     fn graph_has_one_trim_pair_per_piece_and_escaped_fonts() {
-        let g = filter_graph(&[(10.0, 12.0), (13.0, 15.5)], 10.0, Format::Vertical, Some("c.ass"));
+        let classic = framing_chain(Format::Vertical, Layout::Whole, &[], 5.0, (1920, 1080));
+        let g = filter_graph(&[(10.0, 12.0), (13.0, 15.5)], 10.0, &classic, 1.0, Some("c.ass"));
         assert_eq!(g.matches("[0:v]trim").count(), 2);
         assert!(g.contains("trim=start=3.000:end=5.500") && g.contains("concat=n=2:v=1:a=1"));
-        assert!(g.contains("shaping=complex") && g.ends_with("[aout]"));
+        assert!(g.contains("[vcat]split=2") && g.contains("[vf];[vf]null[vl]"), "framing then speed: {g}");
+        assert!(g.contains("shaping=complex") && g.ends_with("[aout]") && !g.contains("atempo"));
+        let wide = framing_chain(Format::Horizontal, Layout::Follow, &[], 5.0, (1920, 1080));
+        let fast = filter_graph(&[(0.0, 5.0)], 0.0, &wide, 1.5, None);
+        assert!(fast.contains("setpts=PTS/1.5[vl]") && fast.contains("atempo=1.5[ac]"), "{fast}");
+    }
+
+    #[test]
+    fn source_times_map_onto_the_cut_clip() {
+        let keeps = [(10.0, 12.0), (15.0, 16.0)];
+        assert_eq!(to_clip_time(&keeps, 11.0), Some(1.0));
+        assert_eq!(to_clip_time(&keeps, 13.0), None, "cut out");
+        assert_eq!(to_clip_time(&keeps, 15.5), Some(2.5));
     }
 
     #[test]

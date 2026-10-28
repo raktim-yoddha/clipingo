@@ -10,10 +10,11 @@ use clipingo_core::{Word, scorer, source, system, tools};
 const USAGE: &str = "usage:
   clip check                          tools, GPU, video encoders, speech models
   clip probe <file|url>               read a video file or YouTube link
+  clip faces <file> <start> <end>     the speaker's face per sampled frame (framing input)
   clip transcribe <file> [lang] [refresh]
   clip run <file|url> [lang] [refresh]
                                       download (links), transcribe, find clips; prints the saved run
-  clip render <run-id> <rank>... [horizontal] [keep-pauses] [no-captions]
+  clip render <run-id> <rank>... [horizontal] [keep-pauses] [no-captions] [title] [speed=1.5] [style=glow] [framing=smart|full|classic] [vision]
                                       render candidates (9:16 by default) + SRT + Premiere XML
   clip score <words.json>             find clip candidates in a transcript ([{\"w\",\"s\",\"e\"}, …])
   clip models                         list local speech models
@@ -44,6 +45,14 @@ fn render_options(flags: &[&str]) -> Result<(Vec<usize>, RenderOptions)> {
             "vertical" => opts.format = Format::Vertical,
             "keep-pauses" => opts.cut_dead_air = false,
             "no-captions" => opts.captions = false,
+            "title" => opts.title = true,
+            "vision" => opts.vision_check = true,
+            f if f.starts_with("speed=") => opts.speed = f[6..].parse().with_context(|| format!("bad speed: {f}"))?,
+            f if f.starts_with("style=") => opts.caption_style = f[6..].to_string(),
+            f if f.starts_with("framing=") => {
+                opts.framing =
+                    serde_json::from_value(serde_json::json!(&f[8..])).with_context(|| format!("bad framing: {f}"))?
+            }
             n => ranks.push(n.parse().with_context(|| format!("not a rank or option: {n}\n{USAGE}"))?),
         }
     }
@@ -87,6 +96,14 @@ async fn main() -> Result<()> {
     let out = match args.as_slice() {
         ["check"] => serde_json::to_value(system::check().await)?,
         ["probe", input] => serde_json::to_value(source::probe(input).await?)?,
+        ["faces", input, start, end] => {
+            let info = source::probe(input).await?;
+            let src = (info.width.unwrap_or(1920) as u32, info.height.unwrap_or(1080) as u32);
+            let model = clipingo_core::framing::model(&progress).await?;
+            let faces =
+                clipingo_core::framing::detect(&model, std::path::Path::new(input), start.parse()?, end.parse()?, src)?;
+            serde_json::json!(faces.iter().map(|f| [f.t, f.x, f.y, f.h]).collect::<Vec<_>>())
+        }
         ["score", path] => {
             let text = std::fs::read_to_string(path).with_context(|| format!("cannot read {path}"))?;
             let words: Vec<Word> = serde_json::from_str(&text).context("transcript must be [{\"w\",\"s\",\"e\"}]")?;

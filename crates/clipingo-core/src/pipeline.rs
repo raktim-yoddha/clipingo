@@ -129,6 +129,40 @@ pub async fn create_run(input: &str, opts: &RunOptions, progress: ProgressFn<'_>
     Ok(run)
 }
 
+/// A saved run with the clips rendered from it so far (Library).
+#[derive(Debug, Clone, Serialize)]
+pub struct RunListing {
+    #[serde(flatten)]
+    pub run: Run,
+    /// Rendered `.mp4` files.
+    pub clips: Vec<String>,
+}
+
+/// Every saved run, newest first. Unreadable runs are skipped.
+pub fn list_runs() -> Vec<RunListing> {
+    let mut out: Vec<RunListing> = std::fs::read_dir(runs_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let run: Run = serde_json::from_slice(&std::fs::read(e.path().join("run.json")).ok()?).ok()?;
+            let mut clips: Vec<String> = std::fs::read_dir(e.path().join("clips"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|c| c.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "mp4"))
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            clips.sort();
+            Some(RunListing { run, clips })
+        })
+        .collect();
+    // Ids start with the creation time in seconds.
+    out.sort_by(|a, b| b.run.id.cmp(&a.run.id));
+    out
+}
+
 /// A saved run and its words. `id` must be a plain run id (no paths).
 pub fn load_run(id: &str) -> Result<(Run, Vec<Word>)> {
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
