@@ -118,6 +118,7 @@
                                                         <ColumnDefinition Width="Auto" />
                                                         <ColumnDefinition Width="*" />
                                                         <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
                                                     </Grid.ColumnDefinitions>
                                                     <CheckBox
                                                         MinWidth="0"
@@ -141,6 +142,13 @@
                                                             Style="{StaticResource HintText}"
                                                             Text="Score" />
                                                     </StackPanel>
+                                                    <Button
+                                                        Grid.Column="3"
+                                                        VerticalAlignment="Center"
+                                                        AutomationProperties.Name="{x:Bind views:Format.TileName('Edit', Title)}"
+                                                        Click="EditClip_Click"
+                                                        Content="Edit"
+                                                        Tag="{x:Bind Rank}" />
                                                 </Grid>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
@@ -158,10 +166,34 @@
                                     <ItemsControl AutomationProperties.Name="Rendered clips" ItemsSource="{x:Bind Rendered}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="models:RenderedClip">
-                                                <TextBlock Margin="0,4" Style="{StaticResource BodyTextBlockStyle}">
-                                                    <Run FontWeight="SemiBold" Text="{x:Bind Title}" />
-                                                    <Run Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind views:Format.ClipLine(DurationS, RemovedS, Encoder)}" />
-                                                </TextBlock>
+                                                <Grid
+                                                    Margin="0,0,0,4"
+                                                    Padding="16,8,8,8"
+                                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                    BorderThickness="1"
+                                                    ColumnSpacing="16"
+                                                    CornerRadius="{StaticResource ControlCornerRadius}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock
+                                                        VerticalAlignment="Center"
+                                                        Style="{StaticResource BodyTextBlockStyle}"
+                                                        TextTrimming="CharacterEllipsis"
+                                                        TextWrapping="NoWrap">
+                                                        <Run FontWeight="SemiBold" Text="{x:Bind Title}" />
+                                                        <Run Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="{x:Bind views:Format.ClipLine(DurationS, RemovedS, Encoder)}" />
+                                                    </TextBlock>
+                                                    <Button
+                                                        Grid.Column="1"
+                                                        AutomationProperties.Name="{x:Bind views:Format.TileName('Edit', Title)}"
+                                                        Click="EditClip_Click"
+                                                        Content="Edit"
+                                                        Style="{StaticResource GhostButton}"
+                                                        Tag="{x:Bind Rank}" />
+                                                </Grid>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>

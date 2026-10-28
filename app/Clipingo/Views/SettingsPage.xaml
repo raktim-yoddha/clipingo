@@ -48,6 +48,85 @@
                 <ProgressBar IsIndeterminate="True" Visibility="{x:Bind ViewModel.CheckCommand.IsRunning, Mode=OneWay}" />
             </StackPanel>
 
+            <StackPanel Spacing="4">
+                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Updates" />
+                <Border Style="{StaticResource SettingRowBorder}">
+                    <Grid ColumnSpacing="16" RowSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <FontIcon Glyph="&#xE895;" Style="{StaticResource SettingIcon}" />
+                        <StackPanel
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Spacing="2">
+                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Updates.CurrentVersion}" />
+                            <TextBlock
+                                Style="{StaticResource HintText}"
+                                Text="{x:Bind Updates.AvailableText, Mode=OneWay}"
+                                Visibility="{x:Bind Updates.IsAvailable, Mode=OneWay}" />
+                            <TextBlock
+                                AutomationProperties.LiveSetting="Polite"
+                                Style="{StaticResource HintText}"
+                                Text="{x:Bind Updates.Status, Mode=OneWay}" />
+                        </StackPanel>
+                        <StackPanel
+                            Grid.Column="2"
+                            VerticalAlignment="Center"
+                            Orientation="Horizontal"
+                            Spacing="8">
+                            <Button
+                                AutomationProperties.Name="Check for updates"
+                                Command="{x:Bind Updates.CheckCommand}"
+                                Content="Check now" />
+                            <Button
+                                AutomationProperties.Name="Install update"
+                                Command="{x:Bind Updates.InstallCommand}"
+                                Content="Update now"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Visibility="{x:Bind Updates.IsAvailable, Mode=OneWay}" />
+                        </StackPanel>
+                        <ProgressBar
+                            Grid.Row="1"
+                            Grid.Column="1"
+                            Grid.ColumnSpan="2"
+                            Maximum="100"
+                            Visibility="{x:Bind Updates.IsBusy, Mode=OneWay}"
+                            Value="{x:Bind Updates.Progress, Mode=OneWay}" />
+                    </Grid>
+                </Border>
+                <Border Style="{StaticResource SettingRowBorder}">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Glyph="&#xE823;" Style="{StaticResource SettingIcon}" />
+                        <StackPanel
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Spacing="2">
+                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Check for updates automatically" />
+                            <TextBlock Style="{StaticResource HintText}" Text="When Clipingo starts, it looks for a newer release on GitHub and offers to install it." />
+                        </StackPanel>
+                        <ToggleSwitch
+                            Grid.Column="2"
+                            MinWidth="0"
+                            AutomationProperties.Name="Check for updates automatically"
+                            IsOn="{x:Bind Updates.AutoCheck, Mode=TwoWay}"
+                            OffContent="Off"
+                            OnContent="On" />
+                    </Grid>
+                </Border>
+            </StackPanel>
+
             <InfoBar
                 Title="System check failed"
                 IsClosable="False"
@@ -63,8 +142,8 @@
                 Severity="Warning" />
 
             <StackPanel Spacing="4">
-                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Speech models" />
-                <ItemsControl AutomationProperties.Name="Speech models" ItemsSource="{x:Bind ViewModel.SpeechModels}">
+                <TextBlock Style="{StaticResource SectionHeaderText}" Text="Downloads" />
+                <ItemsControl AutomationProperties.Name="Downloads" ItemsSource="{x:Bind ViewModel.SpeechModels}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:SpeechModelItem">
                             <Border Margin="0,0,0,4" Style="{StaticResource SettingRowBorder}">
@@ -78,7 +157,7 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
-                                    <FontIcon Glyph="&#xE720;" Style="{StaticResource SettingIcon}" />
+                                    <FontIcon Glyph="&#xE896;" Style="{StaticResource SettingIcon}" />
                                     <StackPanel
                                         Grid.Column="1"
                                         VerticalAlignment="Center"
@@ -134,7 +213,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBlock Style="{StaticResource HintText}" Text="Speech is transcribed on this computer. No audio leaves it." />
+                <TextBlock Style="{StaticResource HintText}" Text="Tools and speech models download here when you need them, into %LOCALAPPDATA%\Clipingo. Speech is transcribed on this computer; no audio leaves it." />
             </StackPanel>
 
             <StackPanel Spacing="4">

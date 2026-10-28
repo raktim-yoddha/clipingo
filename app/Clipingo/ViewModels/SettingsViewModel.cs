@@ -42,8 +42,14 @@ public partial class SettingsViewModel(CoreClient core, Func<CoreClient> connect
     /// <summary>Keeps existing items (an install may be running) and only refreshes their installed state.</summary>
     private void UpdateSpeechModels(SystemReport report)
     {
+        bool Found(string tool) => report.Tools.Any(t => t.Name == tool && t.Found);
+        string? Version(string tool) => report.Tools.FirstOrDefault(t => t.Name == tool && t.Found)?.Version;
+        // Nothing heavy ships with the installer: tools and models download here, on demand.
         var rows = new List<(string Id, string Label, string Detail, bool Installed)>
         {
+            ("ffmpeg", "FFmpeg", Version("ffmpeg") ?? "Video engine: cutting, captions, encoding · about 100 MB", Found("ffmpeg") && Found("ffprobe")),
+            ("yt-dlp", "yt-dlp", Version("yt-dlp") ?? "Downloads YouTube videos and streams · about 18 MB", Found("yt-dlp")),
+            ("deno", "Deno", Version("deno") ?? "Solves YouTube's player checks for yt-dlp · about 45 MB", Found("deno")),
             ("runtime", "whisper.cpp runtime", report.WhisperCli ?? "Official whisper.cpp build with NVIDIA CUDA (runs on CPU too) · 685 MB", report.WhisperCli is not null),
         };
         rows.AddRange(report.SpeechModels.Select(m => (m.Id, m.Label,

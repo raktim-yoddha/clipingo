@@ -12,6 +12,7 @@
     <Grid Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -24,9 +25,25 @@
             </TitleBar.IconSource>
         </TitleBar>
 
+        <!--  A newer release on GitHub (checked at start-up when automatic updates are on).  -->
+        <InfoBar
+            Grid.Row="1"
+            Margin="12,0,12,8"
+            IsClosable="True"
+            IsOpen="{x:Bind Updates.IsAvailable, Mode=OneWay}"
+            Message="{x:Bind Updates.AvailableText, Mode=OneWay}"
+            Severity="Informational">
+            <InfoBar.ActionButton>
+                <Button
+                    AutomationProperties.Name="Update now"
+                    Command="{x:Bind Updates.InstallCommand}"
+                    Content="Update now" />
+            </InfoBar.ActionButton>
+        </InfoBar>
+
         <NavigationView
             x:Name="Nav"
-            Grid.Row="1"
+            Grid.Row="2"
             IsBackButtonVisible="Collapsed"
             IsPaneToggleButtonVisible="False"
             IsSettingsVisible="False"
@@ -49,6 +66,15 @@
                     Tag="Library">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8F1;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    x:Name="EditorItem"
+                    AutomationProperties.Name="Editor"
+                    Content="Editor"
+                    Tag="Editor">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE70F;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem

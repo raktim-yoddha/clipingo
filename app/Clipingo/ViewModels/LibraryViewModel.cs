@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using Clipingo.Models;
 using Clipingo.Services;
@@ -28,12 +27,9 @@ public sealed class RunCard(RunListing run)
 
     public string Moments => string.Join("  ·  ", Run.Candidates.Take(4).Select(c => c.Title));
 
-    public void OpenFolder()
-    {
-        var dir = Run.Clips.Count > 0 ? Path.Combine(Run.Dir, "clips") : Run.Dir;
-        if (Directory.Exists(dir))
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = false });
-    }
+    public string Folder => Run.Clips.Count > 0 ? Path.GetDirectoryName(Run.Clips[0])! : Run.Dir;
+
+    public async void OpenFolder() => await Shell.RevealAsync(Folder);
 }
 
 /// <summary>Library: every saved run, newest first, from clipd's run.list.</summary>

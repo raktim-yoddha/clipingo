@@ -15,4 +15,7 @@ public sealed partial class LibraryPage : Page
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e) => ViewModel.RefreshCommand.Execute(null);
+
+    private void Edit_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e) =>
+        App.MainWindow?.OpenEditor((string)((Microsoft.UI.Xaml.FrameworkElement)sender).Tag, null);
 }

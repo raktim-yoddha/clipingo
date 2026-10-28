@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using Clipingo.Models;
 using Clipingo.Services;
@@ -177,10 +176,10 @@ public partial class JobItem(JobRequest request, Func<CoreClient> connect, Semap
     private bool CanOpenFolder() => OutputFolder is not null;
 
     [RelayCommand(CanExecute = nameof(CanOpenFolder))]
-    private void OpenFolder()
+    private async Task OpenFolderAsync()
     {
-        if (OutputFolder is { } dir && Directory.Exists(dir))
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = false });
+        if (OutputFolder is { } dir && !await Shell.RevealAsync(dir))
+            ErrorMessage = $"Could not open {dir}";
     }
 }
 

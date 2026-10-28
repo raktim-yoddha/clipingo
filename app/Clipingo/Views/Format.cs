@@ -33,6 +33,11 @@ public static class Format
 
     public static Visibility Has(string? text) => string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
 
+    public static Visibility Lacks(string? text) => string.IsNullOrEmpty(text) ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>A star column width (the editor's timeline band).</summary>
+    public static GridLength Stars(double value) => new(Math.Max(0.001, value), GridUnitType.Star);
+
     public static string ClipLine(double duration, double removed, string encoder) =>
         $"  {duration:0.0}s" + (removed > 0.05 ? $", {removed:0.0}s dead air cut" : "") + $" · {encoder}";
 

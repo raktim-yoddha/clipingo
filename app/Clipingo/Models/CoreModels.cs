@@ -24,7 +24,16 @@ public sealed record Candidate(double Start, double End, int Score, int Rank, st
 
 public sealed record TranscriptSummary(string Model, string? Language, int Words);
 
-public sealed record RunResult(string Id, string Dir, SourceInfo Source, string Media, TranscriptSummary Transcript, IReadOnlyList<Candidate> Candidates);
+public sealed record RunResult(string Id, string Dir, SourceInfo Source, string Media, SourceInfo MediaInfo, TranscriptSummary Transcript, IReadOnlyList<Candidate> Candidates, string ClipsDir);
+
+/// <summary>A transcribed word: text, start and end in source seconds.</summary>
+public sealed record Word(string W, double S, double E);
+
+/// <summary>run.render options (the core's RenderOptions).</summary>
+public sealed record RenderOptions(string Format, bool CutDeadAir, bool Captions, string CaptionStyle, bool Title, double Speed, string Framing, bool VisionCheck, string CaptionPosition = "bottom", double CaptionSize = 1, bool Fade = false);
+
+/// <summary>run.open: a run for the editor, the options of its last export and its exported videos.</summary>
+public sealed record RunOpen(RunResult Run, RenderOptions Options, IReadOnlyList<string> Clips, string ClipsDir);
 
 public sealed record RenderedClip(int Rank, string Title, string Video, string Srt, string PremiereXml, double DurationS, double RemovedS, string Encoder);
 
@@ -48,4 +57,5 @@ public sealed record RunListing(
     string Media,
     TranscriptSummary Transcript,
     IReadOnlyList<Candidate> Candidates,
+    string ClipsDir,
     IReadOnlyList<string> Clips);

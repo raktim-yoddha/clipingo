@@ -106,7 +106,10 @@ public sealed class CoreClient : IAsyncDisposable
         Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true });
     }
 
-    /// <summary>CLIPINGO_CLIPD, next to the app, or the repo's cargo output when running from source.</summary>
+    /// <summary>
+    /// CLIPINGO_CLIPD, next to the app, or the repo's cargo output when running from source (the newer of the
+    /// release and debug builds, so a stale one is never picked).
+    /// </summary>
     private static string? FindDaemon()
     {
         if (Environment.GetEnvironmentVariable("CLIPINGO_CLIPD") is { Length: > 0 } env && File.Exists(env))
@@ -116,12 +119,12 @@ public sealed class CoreClient : IAsyncDisposable
             return beside;
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {
-            foreach (var profile in new[] { "release", "debug" })
-            {
-                var candidate = Path.Combine(dir.FullName, "target", profile, "clipd.exe");
-                if (File.Exists(candidate))
-                    return candidate;
-            }
+            var newest = new[] { "release", "debug" }
+                .Select(profile => new FileInfo(Path.Combine(dir.FullName, "target", profile, "clipd.exe")))
+                .Where(f => f.Exists)
+                .MaxBy(f => f.LastWriteTimeUtc);
+            if (newest is not null)
+                return newest.FullName;
         }
         return null;
     }

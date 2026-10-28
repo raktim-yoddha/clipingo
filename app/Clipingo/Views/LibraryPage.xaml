@@ -87,16 +87,27 @@
                                     TextTrimming="CharacterEllipsis"
                                     TextWrapping="NoWrap" />
                             </StackPanel>
-                            <Button
+                            <StackPanel
                                 Grid.Column="1"
                                 VerticalAlignment="Center"
-                                AutomationProperties.Name="Open folder"
-                                Click="{x:Bind OpenFolder}">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon FontSize="14" Glyph="&#xE838;" />
-                                    <TextBlock Text="Open folder" />
-                                </StackPanel>
-                            </Button>
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <Button
+                                    AutomationProperties.Name="{x:Bind views:Format.TileName('Edit clips of', Title)}"
+                                    Click="Edit_Click"
+                                    Tag="{x:Bind Run.Id}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon FontSize="14" Glyph="&#xE70F;" />
+                                        <TextBlock Text="Edit" />
+                                    </StackPanel>
+                                </Button>
+                                <Button AutomationProperties.Name="Open folder" Click="{x:Bind OpenFolder}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon FontSize="14" Glyph="&#xE838;" />
+                                        <TextBlock Text="Open folder" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
                         </Grid>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>

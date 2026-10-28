@@ -13,6 +13,8 @@ public partial class App : Application
         .AddSingleton<Func<CoreClient>>(() => new CoreClient())
         .AddSingleton<JobsService>()
         .AddSingleton<CreateViewModel>()
+        .AddSingleton<EditorViewModel>()
+        .AddSingleton<UpdatesViewModel>()
         .AddTransient<LibraryViewModel>()
         .AddTransient<SettingsViewModel>()
         .BuildServiceProvider();

@@ -8,6 +8,8 @@ public sealed partial class SettingsPage : Page
 {
     public SettingsViewModel ViewModel { get; } = App.Services.GetRequiredService<SettingsViewModel>();
 
+    public UpdatesViewModel Updates { get; } = App.Services.GetRequiredService<UpdatesViewModel>();
+
     public SettingsPage()
     {
         InitializeComponent();
