@@ -1,7 +1,8 @@
 ﻿# E2E: drive the real WinUI app through UI Automation, Review & edit workflow:
 #   Video (workflow, source, Load) → Format → Clips (language) → Captions → Review → Find candidates →
 #   Jobs: export the moments → files on disk → Open folder in Explorer →
-#   Editor: trim, retitle, fix a caption word → Export clip → files updated → Show in folder.
+#   Editor: trim to playhead, split + undo, stitch another clip in, retitle, fix a caption word → Export →
+#   files updated → Show in folder → new clip, look options, 9:16 export → play the export → delete.
 # Usage: powershell -File tests/e2e/app-e2e.ps1 -Source <file-or-youtube-url> [-Language English] [-Exe <Clipingo.exe>]
 param(
     [Parameter(Mandatory)][string]$Source,
@@ -93,37 +94,10 @@ Invoke 'Open output folder'
 $null = Explorer-Shows $run.clips_dir
 'open folder: Explorer shows the clips folder'
 
-# ── Editor: trim, retitle, fix a caption word, export again ──
-$rank = 1
-$clip = $run.candidates | Where-Object rank -eq $rank
-$editButton = Wait-Until { $script:win.FindFirst($T::Descendants, (New-Object $P($A::NameProperty, "Edit $($clip.title)"))) } 30 'Edit button'
-$editButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-$titleBox = Wait-Until { $e = Find 'Clip title'; if ($e -and $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq $clip.title) { $e } } 30 'editor with the clip'
-$captionBox = Wait-Until { $e = Find 'Caption text'; if ($e -and $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value) { $e } } 30 'caption text'
-$words = $captionBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -split ' '
-$words[[int]($words.Count / 2)] = 'EDITED'   # mid-clip: the +1 s trim below must not cut it out
-Invoke 'Start 1 second later'
-$titleBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('E2E edited title')
-$captionBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($words -join ' ')
-$before = (Get-Item $videos[0].FullName).LastWriteTime
-Invoke 'Export clip'
-$status = Wait-Until { Texts | Where-Object { $_ -like 'Exported ·*' } } 600 'editor export'
-"editor:  $status"
-$run2 = Get-Content (Join-Path $runDir.FullName 'run.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-$c2 = $run2.candidates | Where-Object rank -eq $rank
-if ($c2.title -ne 'E2E edited title') { throw "title not saved: $($c2.title)" }
-if ([math]::Abs($c2.start - $clip.start - 1) -gt 0.05) { throw "trim not saved: $($clip.start) -> $($c2.start)" }
-$v1 = Get-ChildItem $run.clips_dir -Filter ("clip_{0:00}_*.mp4" -f $rank) | Select-Object -First 1
-if ($v1.LastWriteTime -le $before) { throw 'clip was not exported again' }
-$srt = Get-Content ([IO.Path]::ChangeExtension($v1.FullName, '.srt')) -Raw -Encoding UTF8
-if ($srt -notmatch 'EDITED') { throw "corrected caption missing from the SRT:`n$srt" }
-'editor:  trim, title and caption fix saved; clip, SRT and XML exported again'
-Invoke 'Show in folder'
-$null = Explorer-Shows $run.clips_dir
-'editor:  Show in folder opens Explorer'
-
-# ── Editor options: undo trim, transcript seek, new clip, look (position, size, speed, fade), delete ──
-function Text-Of($name) { $e = Find $name; if ($e) { $e.Current.Name } }
+# ── Editor: trim, split, stitch, retitle, fix a caption word, export again ──
+function Value-Of($e) { $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }
+function Set-Value($e, $v) { $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($v) }
+function Select-Item($name) { (Enabled $name).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); Start-Sleep -Milliseconds 400 }
 function Choose($combo, $item) {
     $c = Enabled $combo
     $c.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand(); Start-Sleep -Milliseconds 300
@@ -132,35 +106,84 @@ function Choose($combo, $item) {
     try { $c.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse() } catch {}
     Start-Sleep -Milliseconds 300
 }
-$startBefore = (Texts | Where-Object { $_ -match '^\d+:\d\d\.\d$' } | Select-Object -First 1)
-Invoke 'Start 1 second later'
-Invoke 'Undo trim'
-$startAfter = (Texts | Where-Object { $_ -match '^\d+:\d\d\.\d$' } | Select-Object -First 1)
-if ($startAfter -ne $startBefore) { throw "undo trim: start $startBefore became $startAfter" }
-Invoke 'Redo trim'; Invoke 'Undo trim'
-'editor:  undo / redo trim'
+function Saved-Run { Get-Content (Join-Path $runDir.FullName 'run.json') -Raw -Encoding UTF8 | ConvertFrom-Json }
+function Saved-Clip($rank) { (Saved-Run).candidates | Where-Object rank -eq $rank }
+# Leading commas: PowerShell would otherwise unroll the returned list.
+function Pieces($c) { if ($c.segments) { ,@($c.segments) } else { ,@(, @($c.start, $c.end)) } }
 
-$link = $script:win.FindFirst($T::Descendants, (New-Object $P($A::ControlTypeProperty, $CT::Hyperlink)))
-if (-not $link) { throw 'transcript has no clickable words' }
-$all = @($script:win.FindAll($T::Descendants, (New-Object $P($A::ControlTypeProperty, $CT::Hyperlink))))
-$all[[int]($all.Count / 2)].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 400
-"editor:  transcript has $($all.Count) clickable words"
+$rank = 1
+$clip = $run.candidates | Where-Object rank -eq $rank
+$other = $run.candidates | Where-Object rank -ne $rank | Select-Object -First 1
+$editButton = Wait-Until { $script:win.FindFirst($T::Descendants, (New-Object $P($A::NameProperty, "Edit $($clip.title)"))) } 30 'Edit button'
+$editButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+$titleBox = Wait-Until { $e = Find 'Clip title'; if ($e -and (Value-Of $e) -eq $clip.title) { $e } } 30 'editor with the clip'
 
-$count = @((Get-Content (Join-Path $runDir.FullName 'run.json') -Raw -Encoding UTF8 | ConvertFrom-Json).candidates).Count
+# Trim the start to the playhead (1 s in), then split at 4 s and undo / redo it.
+Invoke 'Forward 1 second'
+Invoke 'Trim start to playhead'
+$null = Wait-Until { $c = Saved-Clip $rank; [math]::Abs($c.start - $clip.start - 1) -lt 0.1 } 15 'trim saved'
+'editor:  trim start to playhead saved'
+1..3 | ForEach-Object { Invoke 'Forward 1 second' }
+Invoke 'Split at playhead'
+$null = Wait-Until { (Pieces (Saved-Clip $rank)).Count -eq 2 } 15 'split saved'
+Invoke 'Undo'
+$null = Wait-Until { (Pieces (Saved-Clip $rank)).Count -eq 1 } 15 'undo split saved'
+Invoke 'Redo'; Invoke 'Undo'
+'editor:  split, undo / redo'
+
+# Stitch the other clip in after this one.
+(Enabled 'Add a clip to the timeline').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 500
+$item = Wait-Until { @($A::RootElement.FindAll($T::Descendants, (New-Object $P($A::ControlTypeProperty, $CT::MenuItem)))) | Where-Object { $_.Current.Name -like "$($other.title)*" } | Select-Object -First 1 } 10 'Add clip menu item'
+$item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+$stitched = Wait-Until { $c = Saved-Clip $rank; if ((Pieces $c).Count -eq 2) { $c } } 15 'stitched clip saved'
+"editor:  stitched: $(((Pieces $stitched) | ForEach-Object { '{0:0.0}-{1:0.0}' -f $_[0], $_[1] }) -join ' + ')"
+
+# Title and a caption word of part 1.
+Set-Value $titleBox 'E2E edited title'
+Select-Item 'Captions'
+$captionBox = Wait-Until { $e = Find 'Caption text part 1'; if ($e -and (Value-Of $e)) { $e } } 15 'caption text'
+$words = (Value-Of $captionBox) -split ' '
+$words[[int]($words.Count / 2)] = 'EDITED'
+Set-Value $captionBox ($words -join ' ')
+$null = Wait-Until { (Saved-Clip $rank).title -eq 'E2E edited title' } 15 'title saved'
+
+$before = (Get-Item $videos[0].FullName).LastWriteTime
+Invoke 'Export clip'
+$status = Wait-Until { Texts | Where-Object { $_ -like 'Exported ·*' } } 600 'editor export'
+"editor:  $status"
+$v1 = Get-ChildItem $run.clips_dir -Filter ("clip_{0:00}_*.mp4" -f $rank) | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($v1.LastWriteTime -le $before) { throw 'clip was not exported again' }
+$srt = Get-Content ([IO.Path]::ChangeExtension($v1.FullName, '.srt')) -Raw -Encoding UTF8
+if ($srt -notmatch 'EDITED') { throw "corrected caption missing from the SRT:`n$srt" }
+$len1 = [double](& ffprobe -v error -show_entries format=duration -of csv=p=0 $v1.FullName)
+$sum = ((Pieces $stitched) | ForEach-Object { $_[1] - $_[0] } | Measure-Object -Sum).Sum
+if ($len1 -gt $sum + 0.5 -or $len1 -lt [math]::Min(5, $sum / 2)) { throw "stitched export is $len1 s for $sum s of parts" }
+"editor:  stitched export $([math]::Round($len1,1)) s (parts $([math]::Round($sum,1)) s before dead-air cuts), caption fix in SRT"
+Select-Item 'Preview edit'
+Invoke 'Show in folder'
+$null = Explorer-Shows $run.clips_dir
+'editor:  Show in folder opens Explorer'
+
+# ── New clip, look (position, size, speed, fade), delete ──
+$count = @((Saved-Run).candidates).Count
 Invoke 'New clip at playhead'
-$added = Wait-Until { $r = Get-Content (Join-Path $runDir.FullName 'run.json') -Raw -Encoding UTF8 | ConvertFrom-Json; $n = @($r.candidates | Where-Object { $_.reasons -contains 'Added by you' }); if ($n.Count -eq 1) { $n[0] } } 15 'new clip saved'
-if (@((Get-Content (Join-Path $runDir.FullName 'run.json') -Raw -Encoding UTF8 | ConvertFrom-Json).candidates).Count -ne $count + 1) { throw 'new clip count' }
+$added = Wait-Until { $n = @((Saved-Run).candidates | Where-Object { $_.reasons -contains 'Added by you' }); if ($n.Count -eq 1) { $n[0] } } 15 'new clip saved'
+if (@((Saved-Run).candidates).Count -ne $count + 1) { throw 'new clip count' }
 "editor:  new clip #$($added.rank) at $([math]::Round($added.start,1))-$([math]::Round($added.end,1)) s"
 
-Choose 'Caption position' 'Top'
+Select-Item 'Captions'
+Select-Item 'Top'
 (Enabled 'Caption size').GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue(140)
+Select-Item 'Look'
+Select-Item 'Vertical 9:16'
 Choose 'Export speed' '1.25×'
-(Enabled 'Fade in and out').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+$fade = (Enabled 'Fade in and out').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+if ($fade.Current.ToggleState -ne 'On') { $fade.Toggle() }
 Invoke 'Export clip'
 $status2 = Wait-Until { Texts | Where-Object { $_ -like 'Exported ·*' } } 600 'export of the new clip'
 $opts = Get-Content (Join-Path $runDir.FullName 'render.json') -Raw | ConvertFrom-Json
 if ($opts.caption_position -ne 'top' -or [math]::Abs($opts.caption_size - 1.4) -gt 0.01 -or $opts.speed -ne 1.25 -or -not $opts.fade) { throw "export options not applied: $($opts | ConvertTo-Json -Compress)" }
-$newVideo = Get-ChildItem $run.clips_dir -Filter ("clip_{0:00}_*.mp4" -f $added.rank) | Select-Object -First 1
+$newVideo = Get-ChildItem $run.clips_dir -Filter ("clip_{0:00}_9x16.mp4" -f $added.rank) | Select-Object -First 1
 if (-not $newVideo) { throw 'new clip was not exported' }
 $len = [double](& ffprobe -v error -show_entries format=duration -of csv=p=0 $newVideo.FullName)
 # Frame brightness (metadata=print writes it to a file; PowerShell 5.1 turns ffmpeg's stderr into errors).
@@ -171,10 +194,14 @@ if ($first -ge $mid) { throw "fade in missing: first frame luma $first vs middle
 $frameOut = Join-Path $env:TEMP 'clipingo-e2e\editor-frame.png'
 & ffmpeg -v error -y -ss ($len / 2) -i $newVideo.FullName -frames:v 1 -vf scale=270:-2 $frameOut
 
+# The 9:16 export plays in the app.
+Select-Item 'Preview 9:16 export'
+'editor:  9:16 export opens in the player'
+
 Invoke 'Delete clip'
 $dlg = Wait-Until { $script:win.FindFirst($T::Descendants, (New-Object System.Windows.Automation.AndCondition((New-Object $P($A::NameProperty, 'Delete')), (New-Object $P($A::ControlTypeProperty, $CT::Button))))) } 10 'delete confirmation'
 $dlg.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-$null = Wait-Until { -not @((Get-Content (Join-Path $runDir.FullName 'run.json') -Raw -Encoding UTF8 | ConvertFrom-Json).candidates | Where-Object rank -eq $added.rank) } 15 'clip removed'
+$null = Wait-Until { -not @((Saved-Run).candidates | Where-Object rank -eq $added.rank) } 15 'clip removed'
 'editor:  delete clip (after confirmation)'
 
 $log = Join-Path $env:LOCALAPPDATA 'Clipingo\logs\app.log'

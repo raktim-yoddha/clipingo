@@ -74,16 +74,23 @@ into short chunks with Silero VAD and decoded in one whisper.cpp call; word time
 | Captions | Title at the top, burn-in on/off, 13 caption styles (Pop, Spotlight, Impact, Glow, Boxed, Sweep, Editorial, Hype, Punch, Neon, Headline, Paper, Subtle) |
 | Review | Summary with Edit links → **Generate clips** / **Find candidates** (Ctrl+Enter from any step) |
 
-Jobs run in the background (two at a time) on **Jobs**; **Library** lists every saved run. **Editor** (sidebar, or
-Edit on a clip in Jobs or Library):
+Jobs run in the background (two at a time) on **Jobs** (Cancel stops the work in the core too); **Library** lists
+every saved run with a thumbnail (Edit, Open folder, Remove: exported clips stay). **Editor** (sidebar, or Edit on a
+clip in Jobs or Library) is a small non-linear editor:
 
-- Clip list with **New clip** (from the playhead) and **Delete**; source / exported-clip preview at 0.5–2×.
-- Trim on a timeline: ±1 s, set start / end to the playhead, undo / redo.
-- Transcript: click a word to jump there; fix the title and caption text (word timing kept).
-- Export look: format, framing, caption style, caption position (bottom / middle / top) and size (60–160 %),
-  speed 1–2×, fade in / out, captions, title, dead-air cuts.
-- Shortcuts: Space, I / O, ← / →, N, Ctrl+Z / Ctrl+Y, Ctrl+S, Ctrl+E.
-- Exported files open in File Explorer; in Premiere Pro, File › Import the clip's `.xml`.
+- **Clips** list with thumbnails, filtered All / 9:16 / 16:9; each exported format has its own ▶ button that plays the
+  file in the app. New clip (N, from marks or 30 s from the playhead), Delete clip.
+- **Player** tabs: *Edit* plays the timeline as it will be exported (parts back to back, rough caption and title
+  preview), *Source video* shows the whole video to mark a part (In / Out, I / O) and add it to the timeline or make a
+  new clip of it, *9:16 export* / *16:9 export* play the exported files. Play / pause, ±1 s (Shift ±5 s), loop,
+  0.5–2× preview speed.
+- **Timeline**: filmstrip of the clip's parts and a caption track (click a word to jump there). Split at the playhead
+  (S), drag a part's edges to trim, drag a part to reorder, trim to playhead (Q / W), Delete, Add clip (stitch another
+  clip of the video in), zoom (Ctrl + wheel, + / −, Fit). Undo / redo for everything; changes save by themselves.
+- **Inspector**: *Clip* (title, title over the video), *Captions* (on / off, 13 styles, bottom / middle / top, size
+  60–160 %, per-part text fixes with word timing kept), *Look* (9:16 / 16:9, framing, speed 1–2×, fades, dead-air cuts).
+- **Export 9:16 / 16:9** (Ctrl+E) renders the parts in order: MP4, SRT and a Premiere `.xml`.
+- Exported files open in File Explorer (folder button); in Premiere Pro, File › Import the clip's `.xml`.
 
 Same from the CLI:
 
@@ -104,7 +111,11 @@ normalizes loudness and encodes with the first working encoder (NVENC → QSV �
 ```bash
 powershell -File tests/e2e/make-english-stream.ps1
 powershell -File tests/e2e/app-e2e.ps1 -Source "%TEMP%\clipingo-e2e\english-stream.mp4" -Language English
+powershell -File tests/e2e/auto-e2e.ps1 -Source "%TEMP%\clipingo-e2e\english-stream.mp4"
 ```
+
+`app-e2e` covers Review & edit, Jobs export and the editor (trim, split + undo, stitch, caption fix, export, look
+options, playing an export, delete); `auto-e2e` covers Automatic, 16:9 and removing a run from the Library.
 
 ## clipd methods
 
@@ -122,9 +133,11 @@ powershell -File tests/e2e/app-e2e.ps1 -Source "%TEMP%\clipingo-e2e\english-stre
 | `run.list` | — | saved runs, newest first, with their exported clips |
 | `run.open` | `{ id }` | the run, its clips folder, exported clips and last export options |
 | `run.words` | `{ id, start, end }` | transcript words in that part of the source |
-| `run.edit` | `{ id, rank, start, end, title }` | saves a clip's trim and title; the next export uses them |
+| `run.edit` | `{ id, rank, start, end, title, segments?: [[start, end], …] }` | saves a clip's trim (or the source ranges it plays in order) and title; the next export uses them |
 | `run.add_clip` | `{ id, start, end, title }` | a clip marked by hand (next free rank) |
 | `run.remove_clip` | `{ id, rank }` | removes a clip from the run (exported files stay) |
+| `run.thumbs` | `{ id, times: [s], height? }` | JPEG frames of the video at those times (cached in the run folder) |
+| `run.delete` | `{ id }` | removes a saved run (exported clips stay) |
 | `run.retext` | `{ id, start, end, text }` | corrected caption text for that span (word times kept or shared) |
 | `captions.presets` | — | the 13 caption styles: id, name, description, font, colours |
 | `scorer.find` | `{ words: [{w,s,e}], options?: {min_len,max_len,lengths: [[min,max]],count,within: [start,end],request} }` | ranked clip candidates |
