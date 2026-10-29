@@ -270,6 +270,16 @@ pub struct Candidate {
     pub title: String,
     pub reasons: Vec<String>,
     pub keywords: Vec<String>,
+    /// Source ranges played one after another (cut and stitched in the editor). Empty: just `start..end`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub segments: Vec<(f64, f64)>,
+}
+
+impl Candidate {
+    /// The source ranges this clip plays, in order.
+    pub fn pieces(&self) -> Vec<(f64, f64)> {
+        if self.segments.is_empty() { vec![(self.start, self.end)] } else { self.segments.clone() }
+    }
 }
 
 struct Window {
@@ -478,6 +488,7 @@ pub fn find(words: &[Word], opts: &FindOptions, loud: Option<&Loudness>) -> Vec<
                 title: title_for(&sents, &feats, c),
                 reasons: reasons_for(c),
                 keywords: c.top.iter().filter(|t| t.chars().count() > 3).take(4).cloned().collect(),
+                segments: Vec::new(),
             }
         })
         .collect()

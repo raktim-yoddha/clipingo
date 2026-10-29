@@ -138,11 +138,26 @@ fn encoder_args(encoder: &str) -> Vec<&'static str> {
     }
 }
 
-/// Source time → time in the cut clip (before speed), or `None` if that moment was cut.
-fn to_clip_time(keeps: &[(f64, f64)], t: f64) -> Option<f64> {
+/// A kept part of the source: (piece index, start, end) in source seconds. Pieces are the clip's segments.
+type Keep = (usize, f64, f64);
+
+/// `plan_cuts` over each piece in turn: the kept parts in output order, and the words on the output timeline.
+fn plan_pieces(words: &[Word], pieces: &[(f64, f64)], cut_dead_air: bool) -> (Vec<Keep>, Vec<Word>) {
+    let (mut keeps, mut out, mut offset) = (Vec::new(), Vec::new(), 0.0);
+    for (i, &(start, end)) in pieces.iter().enumerate() {
+        let (k, w) = plan_cuts(words, start, end, cut_dead_air);
+        out.extend(w.into_iter().map(|w| Word { start: w.start + offset, end: w.end + offset, ..w }));
+        offset += k.iter().map(|(a, b)| b - a).sum::<f64>();
+        keeps.extend(k.into_iter().map(|(a, b)| (i, a, b)));
+    }
+    (keeps, out)
+}
+
+/// Source time in `piece` → time in the cut clip (before speed), or `None` if that moment was cut.
+fn to_clip_time(keeps: &[Keep], piece: usize, t: f64) -> Option<f64> {
     let mut offset = 0.0;
-    for &(a, b) in keeps {
-        if (a..b).contains(&t) {
+    for &(i, a, b) in keeps {
+        if i == piece && (a..b).contains(&t) {
             return Some(offset + t - a);
         }
         offset += b - a;
@@ -168,22 +183,22 @@ fn framing_chain(format: Format, layout: Layout, faces: &[Face], duration: f64, 
 /// Fade length in seconds, when fades are on.
 const FADE_S: f64 = 0.4;
 
-/// `fade_over`: the output length, to fade in and out over it.
+/// Input `n` is piece `n`, seeked to `seeks[n]`. `fade_over`: the output length, to fade in and out over it.
 fn filter_graph(
-    keeps: &[(f64, f64)],
-    seek: f64,
+    keeps: &[Keep],
+    seeks: &[f64],
     frame_chain: &str,
     speed: f64,
     ass_file: Option<&str>,
     fade_over: Option<f64>,
 ) -> String {
     let mut g = String::new();
-    for (i, &(a, b)) in keeps.iter().enumerate() {
-        let (a, b) = (a - seek, b - seek);
+    for (i, &(n, a, b)) in keeps.iter().enumerate() {
+        let (a, b) = (a - seeks[n], b - seeks[n]);
         let fade_out = (b - a - 0.012).max(0.0);
         g.push_str(&format!(
-            "[0:v]trim=start={a:.3}:end={b:.3},setpts=PTS-STARTPTS[v{i}];\
-             [0:a]atrim=start={a:.3}:end={b:.3},asetpts=PTS-STARTPTS,afade=t=in:d=0.012,afade=t=out:st={fade_out:.3}:d=0.012[a{i}];"
+            "[{n}:v]trim=start={a:.3}:end={b:.3},setpts=PTS-STARTPTS[v{i}];\
+             [{n}:a]atrim=start={a:.3}:end={b:.3},asetpts=PTS-STARTPTS,afade=t=in:d=0.012,afade=t=out:st={fade_out:.3}:d=0.012[a{i}];"
         ));
     }
     for i in 0..keeps.len() {
@@ -349,11 +364,13 @@ pub async fn render_clips(
             .iter()
             .find(|c| c.rank == rank)
             .with_context(|| format!("no candidate #{rank} in this run"))?;
-        let (keeps, mut clip_words) = plan_cuts(&words, c.start, c.end, opts.cut_dead_air);
+        let pieces = c.pieces();
+        let (keeps, mut clip_words) = plan_pieces(&words, &pieces, opts.cut_dead_air);
+        let flat: Vec<(f64, f64)> = keeps.iter().map(|&(_, a, b)| (a, b)).collect();
         for w in &mut clip_words {
             (w.start, w.end) = (w.start / speed, w.end / speed);
         }
-        let duration = keeps.iter().map(|(a, b)| b - a).sum::<f64>() / speed;
+        let duration = flat.iter().map(|(a, b)| b - a).sum::<f64>() / speed;
         let stem = format!("clip_{rank:02}_{}", if opts.format == Format::Vertical { "9x16" } else { "16x9" });
 
         let srt_path = out_dir.join(format!("{stem}.srt"));
@@ -369,25 +386,28 @@ pub async fn render_clips(
         }
         // ponytail: the Premiere timeline stays at 1× (no time remap yet); speed is in the MP4 only.
         let xml_path = out_dir.join(format!("{stem}.xml"));
-        std::fs::write(&xml_path, premiere_xml(&run, &c.title, &keeps, opts.format))?;
+        std::fs::write(&xml_path, premiere_xml(&run, &c.title, &flat, opts.format))?;
 
         let src = (run.media_info.width.unwrap_or(1920) as u32, run.media_info.height.unwrap_or(1080) as u32);
         let mut faces: Vec<Face> = Vec::new();
         if opts.format == Format::Vertical && opts.framing != Framing::Classic {
             let model = crate::framing::model(progress).await?;
             progress(Progress { stage: format!("Finding the speaker in clip #{rank}"), done: 0, total: None });
-            let (media, start, end) = (std::path::PathBuf::from(&run.media), c.start, c.end);
-            let found = tokio::task::spawn_blocking(move || crate::framing::detect(&model, &media, start, end, src))
-                .await
-                .context("face detection stopped")??;
-            // Onto the cut clip's timeline; faces in cut-out moments are dropped.
-            faces = found.into_iter().filter_map(|f| Some(Face { t: to_clip_time(&keeps, f.t)?, ..f })).collect();
+            for (i, &(start, end)) in pieces.iter().enumerate() {
+                let (model, media) = (model.clone(), std::path::PathBuf::from(&run.media));
+                let found =
+                    tokio::task::spawn_blocking(move || crate::framing::detect(&model, &media, start, end, src))
+                        .await
+                        .context("face detection stopped")??;
+                // Onto the cut clip's timeline; faces in cut-out moments are dropped.
+                faces.extend(found.into_iter().filter_map(|f| Some(Face { t: to_clip_time(&keeps, i, f.t)?, ..f })));
+            }
         }
         let (mut layout, unsure) = crate::framing::choose(opts.framing, &faces, duration * speed);
         if opts.format == Format::Vertical && opts.framing == Framing::Smart && opts.vision_check && unsure {
             progress(Progress { stage: format!("Checking clip #{rank} with AI vision"), done: 0, total: None });
             let frame = out_dir.join(format!("{stem}.vision.jpg"));
-            let mid = format!("{:.3}", (c.start + c.end) / 2.0);
+            let mid = format!("{:.3}", (pieces[0].0 + pieces[0].1) / 2.0);
             let grabbed = Command::new(crate::tools::resolve("ffmpeg"))
                 .args(["-hide_banner", "-v", "error", "-y", "-ss", &mid, "-i", &run.media, "-frames:v", "1"])
                 .args(["-vf", "scale=960:-2"])
@@ -402,14 +422,14 @@ pub async fn render_clips(
         }
         let frame_chain = framing_chain(opts.format, layout, &faces, duration * speed, src);
 
-        // Input seek (fast) to the clip start; the graph trims relative to it.
-        let seek = c.start;
+        // One input per piece, seeked (fast) to its start; the graph trims relative to it.
+        let seeks: Vec<f64> = pieces.iter().map(|p| p.0).collect();
         let graph_name = format!("{stem}.graph.txt");
         std::fs::write(
             out_dir.join(&graph_name),
             filter_graph(
                 &keeps,
-                seek,
+                &seeks,
                 &frame_chain,
                 speed,
                 overlay.then_some(ass_name.as_str()),
@@ -417,14 +437,11 @@ pub async fn render_clips(
             ),
         )?;
         let video_name = format!("{stem}.mp4");
-        let mut args: Vec<String> = vec![
-            "-ss".into(),
-            format!("{seek:.3}"),
-            "-to".into(),
-            format!("{:.3}", c.end + 0.5),
-            "-i".into(),
-            run.media.clone(),
-        ];
+        let mut args: Vec<String> = Vec::new();
+        for &(a, b) in &pieces {
+            args.extend(["-ss".into(), format!("{a:.3}"), "-to".into(), format!("{:.3}", b + 0.5), "-i".into()]);
+            args.push(run.media.clone());
+        }
         args.extend([
             "-/filter_complex".into(),
             graph_name.clone(),
@@ -448,7 +465,7 @@ pub async fn render_clips(
             srt: srt_path.to_string_lossy().into_owned(),
             premiere_xml: xml_path.to_string_lossy().into_owned(),
             duration_s: duration,
-            removed_s: (c.end - c.start) - duration * speed,
+            removed_s: pieces.iter().map(|(a, b)| b - a).sum::<f64>() - duration * speed,
             encoder: encoder.to_string(),
         });
     }
@@ -490,25 +507,38 @@ mod tests {
     #[test]
     fn graph_has_one_trim_pair_per_piece_and_escaped_fonts() {
         let classic = framing_chain(Format::Vertical, Layout::Whole, &[], 5.0, (1920, 1080));
-        let g = filter_graph(&[(10.0, 12.0), (13.0, 15.5)], 10.0, &classic, 1.0, Some("c.ass"), None);
+        let g = filter_graph(&[(0, 10.0, 12.0), (0, 13.0, 15.5)], &[10.0], &classic, 1.0, Some("c.ass"), None);
         assert_eq!(g.matches("[0:v]trim").count(), 2);
         assert!(g.contains("trim=start=3.000:end=5.500") && g.contains("concat=n=2:v=1:a=1"));
         assert!(g.contains("[vcat]split=2") && g.contains("[vf];[vf]null[vl]"), "framing then speed: {g}");
         assert!(g.contains("shaping=complex") && g.ends_with("[aout]") && !g.contains("atempo"));
         let wide = framing_chain(Format::Horizontal, Layout::Follow, &[], 5.0, (1920, 1080));
-        let fast = filter_graph(&[(0.0, 5.0)], 0.0, &wide, 1.5, None, None);
+        let fast = filter_graph(&[(0, 0.0, 5.0)], &[0.0], &wide, 1.5, None, None);
         assert!(fast.contains("setpts=PTS/1.5[vl]") && fast.contains("atempo=1.5[ac]"), "{fast}");
         assert!(!fast.contains("d=0.4"), "no fades unless asked (the 12 ms de-click fades stay)");
-        let faded = filter_graph(&[(0.0, 5.0)], 0.0, &wide, 1.0, None, Some(5.0));
+        let faded = filter_graph(&[(0, 0.0, 5.0)], &[0.0], &wide, 1.0, None, Some(5.0));
+        let stitched = filter_graph(&[(0, 50.0, 52.0), (1, 10.0, 12.0)], &[50.0, 10.0], &wide, 1.0, None, None);
+        assert!(stitched.contains("[1:v]trim=start=0.000:end=2.000") && stitched.contains("[0:a]atrim=start=0.000"));
         assert!(faded.contains("fade=t=out:st=4.600:d=0.4[vout]") && faded.contains("afade=t=in:d=0.4"), "{faded}");
     }
 
     #[test]
     fn source_times_map_onto_the_cut_clip() {
-        let keeps = [(10.0, 12.0), (15.0, 16.0)];
-        assert_eq!(to_clip_time(&keeps, 11.0), Some(1.0));
-        assert_eq!(to_clip_time(&keeps, 13.0), None, "cut out");
-        assert_eq!(to_clip_time(&keeps, 15.5), Some(2.5));
+        let keeps = [(0, 10.0, 12.0), (0, 15.0, 16.0), (1, 2.0, 4.0)];
+        assert_eq!(to_clip_time(&keeps, 0, 11.0), Some(1.0));
+        assert_eq!(to_clip_time(&keeps, 0, 13.0), None, "cut out");
+        assert_eq!(to_clip_time(&keeps, 0, 15.5), Some(2.5));
+        assert_eq!(to_clip_time(&keeps, 1, 3.0), Some(4.0), "second piece follows the first");
+        assert_eq!(to_clip_time(&keeps, 0, 3.0), None, "only its own piece");
+    }
+
+    #[test]
+    fn stitched_pieces_play_in_order() {
+        let words = [w("late", 50.5, 51.0), w("early", 10.5, 11.0)];
+        let (keeps, out) = plan_pieces(&words, &[(50.0, 52.0), (10.0, 12.0)], false);
+        assert_eq!(keeps, vec![(0, 50.0, 52.0), (1, 10.0, 12.0)]);
+        let got: Vec<_> = out.iter().map(|x| (x.text.as_str(), x.start)).collect();
+        assert_eq!(got, [("late", 0.5), ("early", 2.5)]);
     }
 
     #[test]

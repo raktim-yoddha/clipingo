@@ -159,6 +159,15 @@ async fn dispatch(method: &str, params: Value, id: &Value, out: &UnboundedSender
             pipeline::remove_clip(&p.id, p.rank)?;
             Ok(json!({}))
         }
+        "run.delete" => {
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            pipeline::delete_run(&p.id)?;
+            Ok(json!({}))
+        }
         "run.retext" => {
             #[derive(Deserialize)]
             struct P {
@@ -169,6 +178,20 @@ async fn dispatch(method: &str, params: Value, id: &Value, out: &UnboundedSender
             }
             let p: P = serde_json::from_value(params).map_err(invalid_params)?;
             Ok(json!(pipeline::retext(&p.id, p.start, p.end, &p.text)?))
+        }
+        "run.thumbs" => {
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+                times: Vec<f64>,
+                #[serde(default = "thumb_height")]
+                height: u32,
+            }
+            fn thumb_height() -> u32 {
+                72
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(pipeline::thumbs(&p.id, &p.times, p.height).await?))
         }
         "captions.presets" => Ok(json!(clipingo_core::captions::PRESETS)),
         "models.list" => Ok(json!({ "whisper_cli": models::whisper_cli(), "models": models::status() })),
@@ -216,11 +239,33 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S) ->
         anyhow::Ok(())
     });
     let mut lines = BufReader::new(read).lines();
-    while let Some(line) = lines.next_line().await? {
+    let mut pending: Option<String> = None;
+    loop {
+        let line = match pending.take() {
+            Some(l) => l,
+            None => match lines.next_line().await? {
+                Some(l) => l,
+                None => break,
+            },
+        };
         if line.trim().is_empty() {
             continue;
         }
-        if let Some(reply) = respond(&line, &tx).await {
+        // While a call runs, watch the connection: a client that hangs up (Cancel in Jobs) drops the call, which
+        // kills its ffmpeg / whisper / yt-dlp children. A line sent meanwhile waits its turn.
+        let work = respond(&line, &tx);
+        tokio::pin!(work);
+        let reply = tokio::select! {
+            r = &mut work => r,
+            next = lines.next_line() => match next? {
+                None => break,
+                Some(l) => {
+                    pending = Some(l);
+                    work.await
+                }
+            },
+        };
+        if let Some(reply) = reply {
             let _ = tx.send(reply);
         }
     }
