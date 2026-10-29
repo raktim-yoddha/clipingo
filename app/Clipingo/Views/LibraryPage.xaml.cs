@@ -16,6 +16,23 @@ public sealed partial class LibraryPage : Page
 
     protected override void OnNavigatedTo(NavigationEventArgs e) => ViewModel.RefreshCommand.Execute(null);
 
+    private async void Delete_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if ((sender as Microsoft.UI.Xaml.FrameworkElement)?.Tag is not RunCard card)
+            return;
+        var confirm = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Remove this video from the Library?",
+            Content = $"“{card.Title}”, its transcript and clip list are deleted. Clips you exported stay in {card.Folder}.",
+            PrimaryButtonText = "Remove",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await confirm.ShowAsync() == ContentDialogResult.Primary)
+            await ViewModel.DeleteAsync(card);
+    }
+
     private void Edit_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e) =>
         App.MainWindow?.OpenEditor((string)((Microsoft.UI.Xaml.FrameworkElement)sender).Tag, null);
 }

@@ -18,7 +18,7 @@
                         AutomationProperties.HeadingLevel="Level1"
                         Style="{StaticResource TitleTextBlockStyle}"
                         Text="Library" />
-                    <TextBlock Style="{StaticResource DescriptionText}" Text="Every video you clipped: its scored moments and the clips exported from it." />
+                    <TextBlock Style="{StaticResource DescriptionText}" Text="Every video you clipped. Edit opens its clips in the editor." />
                 </StackPanel>
                 <Button
                     HorizontalAlignment="Right"
@@ -63,35 +63,40 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:RunCard">
                         <Grid
-                            Margin="0,0,0,4"
-                            Padding="20,16"
+                            Margin="0,0,0,8"
+                            Padding="12"
                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
                             ColumnSpacing="16"
-                            CornerRadius="{StaticResource ControlCornerRadius}">
+                            CornerRadius="{StaticResource OverlayCornerRadius}">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="128" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <Border
+                                Height="72"
+                                Background="Black"
+                                CornerRadius="{StaticResource ControlCornerRadius}">
+                                <Image Source="{x:Bind views:Format.File(Thumb), Mode=OneWay}" Stretch="UniformToFill" />
+                            </Border>
+                            <StackPanel
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Spacing="4">
                                 <TextBlock
                                     Style="{StaticResource BodyStrongTextBlockStyle}"
                                     Text="{x:Bind Title}"
                                     TextTrimming="CharacterEllipsis"
                                     TextWrapping="NoWrap" />
                                 <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Details}" />
-                                <TextBlock
-                                    Style="{StaticResource HintText}"
-                                    Text="{x:Bind Moments}"
-                                    TextTrimming="CharacterEllipsis"
-                                    TextWrapping="NoWrap" />
                             </StackPanel>
                             <StackPanel
-                                Grid.Column="1"
+                                Grid.Column="2"
                                 VerticalAlignment="Center"
                                 Orientation="Horizontal"
-                                Spacing="8">
+                                Spacing="4">
                                 <Button
                                     AutomationProperties.Name="{x:Bind views:Format.TileName('Edit clips of', Title)}"
                                     Click="Edit_Click"
@@ -101,11 +106,20 @@
                                         <TextBlock Text="Edit" />
                                     </StackPanel>
                                 </Button>
-                                <Button AutomationProperties.Name="Open folder" Click="{x:Bind OpenFolder}">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon FontSize="14" Glyph="&#xE838;" />
-                                        <TextBlock Text="Open folder" />
-                                    </StackPanel>
+                                <Button
+                                    AutomationProperties.Name="Open folder"
+                                    Click="{x:Bind OpenFolder}"
+                                    Style="{StaticResource GhostButton}"
+                                    ToolTipService.ToolTip="Open the exported clips in File Explorer">
+                                    <FontIcon FontSize="16" Glyph="&#xE838;" />
+                                </Button>
+                                <Button
+                                    AutomationProperties.Name="{x:Bind views:Format.TileName('Delete', Title)}"
+                                    Click="Delete_Click"
+                                    Style="{StaticResource GhostButton}"
+                                    Tag="{x:Bind}"
+                                    ToolTipService.ToolTip="Remove from the Library (exported clips stay)">
+                                    <FontIcon FontSize="16" Glyph="&#xE74D;" />
                                 </Button>
                             </StackPanel>
                         </Grid>

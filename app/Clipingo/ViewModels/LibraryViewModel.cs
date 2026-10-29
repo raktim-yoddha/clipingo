@@ -8,10 +8,14 @@ using CommunityToolkit.Mvvm.Input;
 namespace Clipingo.ViewModels;
 
 /// <summary>One saved run in the Library.</summary>
-public sealed class RunCard(RunListing run)
+public partial class RunCard(RunListing run) : ObservableObject
 {
     public RunListing Run { get; } = run;
     public string Title => Run.Source.Title;
+
+    /// <summary>The YouTube thumbnail, or a frame of the video (filled in by the Library).</summary>
+    [ObservableProperty]
+    public partial string? Thumb { get; set; } = run.Source.Thumbnail;
 
     public string Details
     {
@@ -21,13 +25,14 @@ public sealed class RunCard(RunListing run)
             var created = long.TryParse(Run.Id.Split('-')[0], out var secs)
                 ? DateTimeOffset.FromUnixTimeSeconds(secs).ToLocalTime().ToString("d MMM yyyy, HH:mm")
                 : Run.Id;
-            return $"{created} · {Run.Candidates.Count} moments · {Run.Clips.Count} clips exported · {Run.Transcript.Words:N0} words ({Run.Transcript.Model})";
+            var vertical = Run.Clips.Count(c => c.EndsWith("_9x16.mp4", StringComparison.Ordinal));
+            var exported = Run.Clips.Count == 0 ? "nothing exported yet"
+                : string.Join(" + ", new[] { (vertical, "9:16"), (Run.Clips.Count - vertical, "16:9") }.Where(p => p.Item1 > 0).Select(p => $"{p.Item1} × {p.Item2}")) + " exported";
+            return $"{created} · {Run.Candidates.Count} clip{(Run.Candidates.Count == 1 ? "" : "s")} · {exported}";
         }
     }
 
-    public string Moments => string.Join("  ·  ", Run.Candidates.Take(4).Select(c => c.Title));
-
-    public string Folder => Run.Clips.Count > 0 ? Path.GetDirectoryName(Run.Clips[0])! : Run.Dir;
+    public string Folder => Run.Clips.Count > 0 ? Path.GetDirectoryName(Run.Clips[0])! : Directory.Exists(Run.ClipsDir) ? Run.ClipsDir : Run.Dir;
 
     public async void OpenFolder() => await Shell.RevealAsync(Folder);
 }
@@ -63,5 +68,33 @@ public partial class LibraryViewModel(CoreClient core) : ObservableObject
         }
         Loaded = true;
         OnPropertyChanged(nameof(IsEmpty));
+        // Local videos: a frame from the first clip.
+        foreach (var card in Runs.Where(c => string.IsNullOrEmpty(c.Thumb)).ToList())
+        {
+            try
+            {
+                var at = card.Run.Candidates.FirstOrDefault()?.Start ?? 1;
+                var paths = await core.CallAsync<List<string>>("run.thumbs", new { id = card.Run.Id, times = new[] { at + 0.5 }, height = 120 }, ct);
+                card.Thumb = paths.FirstOrDefault(p => p.Length > 0);
+            }
+            catch (Exception ex) when (ex is CoreException or IOException)
+            {
+            }
+        }
+    }
+
+    /// <summary>Removes a run from the Library (the page confirms first). Exported clips stay on disk.</summary>
+    public async Task DeleteAsync(RunCard card)
+    {
+        try
+        {
+            await core.CallAsync<object>("run.delete", new { id = card.Run.Id });
+            Runs.Remove(card);
+            OnPropertyChanged(nameof(IsEmpty));
+        }
+        catch (Exception ex) when (ex is CoreException or IOException)
+        {
+            ErrorMessage = ex.Message;
+        }
     }
 }
