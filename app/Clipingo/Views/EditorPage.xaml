@@ -9,31 +9,42 @@
     Background="Transparent"
     KeyDown="Page_KeyDown">
 
-    <Grid Padding="{StaticResource PagePadding}" RowSpacing="24">
+    <Page.Resources>
+        <!--  Square icon button for toolbars.  -->
+        <Style
+            x:Key="ToolButton"
+            BasedOn="{StaticResource GhostButton}"
+            TargetType="Button">
+            <Setter Property="Padding" Value="9,7" />
+            <Setter Property="MinWidth" Value="36" />
+        </Style>
+        <Style x:Key="PaneBorder" TargetType="Border">
+            <Setter Property="Background" Value="{ThemeResource GlassBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource SurfaceStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{StaticResource OverlayCornerRadius}" />
+        </Style>
+    </Page.Resources>
+
+    <Grid Padding="20,8,20,16" RowSpacing="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!--  Header: title and the video being edited.  -->
-        <Grid ColumnSpacing="16">
+        <!--  Top bar: video, then status and Export.  -->
+        <Grid ColumnSpacing="12">
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel Spacing="8">
-                <TextBlock
-                    AutomationProperties.HeadingLevel="Level1"
-                    Style="{StaticResource TitleTextBlockStyle}"
-                    Text="Editor" />
-                <TextBlock Style="{StaticResource DescriptionText}" Text="Trim a clip, fix its title and captions, then export it again. Each export includes a Premiere Pro timeline." />
-            </StackPanel>
             <ComboBox
-                Grid.Column="1"
-                Width="360"
-                VerticalAlignment="Bottom"
+                Width="320"
+                VerticalAlignment="Center"
                 AutomationProperties.Name="Video"
-                Header="Video"
                 ItemsSource="{x:Bind ViewModel.Runs}"
                 PlaceholderText="Choose a video"
                 SelectedItem="{x:Bind ViewModel.SelectedRun, Mode=OneWay}"
@@ -47,504 +58,693 @@
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
+            <StackPanel
+                Grid.Column="1"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Center"
+                Orientation="Horizontal"
+                Spacing="12">
+                <ProgressBar
+                    Width="120"
+                    Maximum="100"
+                    Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}"
+                    Value="{x:Bind ViewModel.ExportProgress, Mode=OneWay}" />
+                <TextBlock
+                    MaxWidth="420"
+                    VerticalAlignment="Center"
+                    AutomationProperties.LiveSetting="Polite"
+                    Style="{StaticResource HintText}"
+                    Text="{x:Bind ViewModel.Status, Mode=OneWay}"
+                    TextTrimming="CharacterEllipsis"
+                    TextWrapping="NoWrap" />
+            </StackPanel>
+            <StackPanel
+                Grid.Column="2"
+                Orientation="Horizontal"
+                Spacing="8">
+                <Button
+                    AutomationProperties.Name="Show in folder"
+                    Command="{x:Bind ViewModel.RevealCommand}"
+                    IsEnabled="{x:Bind ViewModel.HasClip, Mode=OneWay}"
+                    Style="{StaticResource ToolButton}"
+                    ToolTipService.ToolTip="Show the exported files in File Explorer (MP4, SRT and a Premiere Pro .xml)">
+                    <FontIcon FontSize="16" Glyph="&#xE838;" />
+                </Button>
+                <Button
+                    AutomationProperties.Name="Export clip"
+                    Command="{x:Bind ViewModel.ExportCommand}"
+                    IsEnabled="{x:Bind ViewModel.HasClip, Mode=OneWay}"
+                    Style="{StaticResource PillAccentButton}"
+                    ToolTipService.ToolTip="Render this clip (Ctrl+E)">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="14" Glyph="&#xEDE1;" />
+                        <TextBlock Text="{x:Bind ViewModel.ExportLabel, Mode=OneWay}" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="1" ColumnSpacing="24">
+        <InfoBar
+            Grid.Row="1"
+            IsClosable="True"
+            IsOpen="{x:Bind views:Format.HasText(ViewModel.ErrorMessage), Mode=OneWay}"
+            Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+            Severity="Error" />
+
+        <!--  Clips · player · inspector  -->
+        <Grid Grid.Row="2" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="300" />
+                <ColumnDefinition Width="250" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="300" />
             </Grid.ColumnDefinitions>
 
-            <!--  Clips of the video.  -->
-            <Border Padding="8" Style="{StaticResource PanelBorder}">
+            <!--  Clips of the video  -->
+            <Border Padding="8" Style="{StaticResource PaneBorder}">
                 <Grid RowSpacing="8">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-                <StackPanel
-                    Padding="8,4,4,0"
-                    Orientation="Horizontal"
-                    Spacing="4">
-                    <Button
-                        AutomationProperties.Name="New clip at playhead"
-                        Command="{x:Bind ViewModel.NewClipCommand}"
-                        Style="{StaticResource GhostButton}"
-                        ToolTipService.ToolTip="Mark a new clip from the playhead (N)">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon FontSize="14" Glyph="&#xE710;" />
-                            <TextBlock Text="New clip" />
-                        </StackPanel>
-                    </Button>
-                    <Button
-                        AutomationProperties.Name="Delete clip"
-                        Click="DeleteClip_Click"
-                        IsEnabled="{x:Bind ViewModel.HasClip, Mode=OneWay}"
-                        Style="{StaticResource GhostButton}"
-                        ToolTipService.ToolTip="Remove this clip from the video's list">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Padding="8,4,0,0">
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            Style="{StaticResource BodyStrongTextBlockStyle}"
+                            Text="Clips" />
+                        <StackPanel
+                            HorizontalAlignment="Right"
+                            Orientation="Horizontal"
+                            Spacing="2">
+                        <Button
+                            AutomationProperties.Name="Delete clip"
+                            Click="DeleteClip_Click"
+                            IsEnabled="{x:Bind ViewModel.HasClip, Mode=OneWay}"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Delete this clip (exported files stay)">
                             <FontIcon FontSize="14" Glyph="&#xE74D;" />
-                            <TextBlock Text="Delete" />
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-                <ListView
-                    Grid.Row="1"
-                    AutomationProperties.Name="Clips"
-                    ItemsSource="{x:Bind ViewModel.Clips}"
-                    SelectedItem="{x:Bind ViewModel.Selected, Mode=OneWay}"
-                    SelectionChanged="Clip_SelectionChanged"
-                    SelectionMode="Single">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="vm:EditorClip">
-                            <StackPanel
-                                Padding="4,10"
-                                AutomationProperties.Name="{x:Bind Title, Mode=OneWay}"
-                                Spacing="2">
-                                <TextBlock
-                                    MaxLines="2"
-                                    Style="{StaticResource BodyStrongTextBlockStyle}"
-                                    Text="{x:Bind Title, Mode=OneWay}" />
-                                <TextBlock Style="{StaticResource HintText}" Text="{x:Bind RangeText, Mode=OneWay}" />
-                                <TextBlock Style="{StaticResource HintText}" Text="{x:Bind StateText, Mode=OneWay}" />
+                        </Button>
+                        <Button
+                            AutomationProperties.Name="New clip at playhead"
+                            Command="{x:Bind ViewModel.NewClipCommand}"
+                            IsEnabled="{x:Bind views:Format.HasText(ViewModel.MediaPath), Mode=OneWay}"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="New clip: the marked part (Source), or 30 s from the playhead (N)">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontSize="14" Glyph="&#xE710;" />
+                                <TextBlock Text="New" />
                             </StackPanel>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
+                        </Button>
+                        </StackPanel>
+                    </Grid>
+                    <SelectorBar
+                        x:Name="ClipFilterBar"
+                        Grid.Row="1"
+                        SelectionChanged="ClipFilter_SelectionChanged">
+                        <SelectorBarItem
+                            AutomationProperties.Name="All clips"
+                            IsSelected="True"
+                            Text="All" />
+                        <SelectorBarItem AutomationProperties.Name="Clips exported 9:16" Text="9:16" />
+                        <SelectorBarItem AutomationProperties.Name="Clips exported 16:9" Text="16:9" />
+                    </SelectorBar>
+                    <ListView
+                        x:Name="ClipList"
+                        Grid.Row="2"
+                        AutomationProperties.Name="Clips"
+                        ItemsSource="{x:Bind ViewModel.VisibleClips}"
+                        SelectedItem="{x:Bind ViewModel.Selected, Mode=OneWay}"
+                        SelectionChanged="Clip_SelectionChanged"
+                        SelectionMode="Single">
+                        <ListView.ItemContainerStyle>
+                            <Style BasedOn="{StaticResource DefaultListViewItemStyle}" TargetType="ListViewItem">
+                                <Setter Property="Padding" Value="8,6" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:EditorClip">
+                                <Grid AutomationProperties.Name="{x:Bind Title, Mode=OneWay}" RowSpacing="6">
+                                    <Grid.ContextFlyout>
+                                        <MenuFlyout>
+                                            <MenuFlyoutItem
+                                                Click="DeleteClip_Click"
+                                                Tag="{x:Bind}"
+                                                Text="Delete clip">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon Glyph="&#xE74D;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                        </MenuFlyout>
+                                    </Grid.ContextFlyout>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border
+                                            Height="45"
+                                            VerticalAlignment="Top"
+                                            Background="Black"
+                                            CornerRadius="4">
+                                            <Image Source="{x:Bind views:Format.File(Thumb), Mode=OneWay}" Stretch="UniformToFill" />
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock
+                                                MaxLines="2"
+                                                Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                Text="{x:Bind Title, Mode=OneWay}"
+                                                TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Info, Mode=OneWay}" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <!--  Its exports, each playable here.  -->
+                                    <StackPanel
+                                        Grid.Row="1"
+                                        Orientation="Horizontal"
+                                        Spacing="6">
+                                        <Button
+                                            Padding="8,2"
+                                            AutomationProperties.Name="{x:Bind views:Format.TileName('Play 9:16 export of', Title), Mode=OneWay}"
+                                            Click="PlayVertical_Click"
+                                            FontSize="12"
+                                            Tag="{x:Bind}"
+                                            ToolTipService.ToolTip="Play the exported 9:16 clip"
+                                            Visibility="{x:Bind HasVertical, Mode=OneWay}">
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <FontIcon FontSize="10" Glyph="&#xE768;" />
+                                                <TextBlock Text="9:16" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button
+                                            Padding="8,2"
+                                            AutomationProperties.Name="{x:Bind views:Format.TileName('Play 16:9 export of', Title), Mode=OneWay}"
+                                            Click="PlayHorizontal_Click"
+                                            FontSize="12"
+                                            Tag="{x:Bind}"
+                                            ToolTipService.ToolTip="Play the exported 16:9 clip"
+                                            Visibility="{x:Bind HasHorizontal, Mode=OneWay}">
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <FontIcon FontSize="10" Glyph="&#xE768;" />
+                                                <TextBlock Text="16:9" />
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
                 </Grid>
             </Border>
 
-            <!--  Nothing open yet.  -->
+            <!--  Player  -->
             <Border
                 Grid.Column="1"
-                Padding="32,56"
-                VerticalAlignment="Top"
-                Style="{StaticResource PanelBorder}"
-                Visibility="{x:Bind ViewModel.NoClip, Mode=OneWay}">
-                <StackPanel HorizontalAlignment="Center" Spacing="4">
-                    <FontIcon
-                        FontSize="26"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Glyph="&#xE70F;" />
-                    <TextBlock
-                        Margin="0,8,0,0"
-                        HorizontalAlignment="Center"
-                        Style="{StaticResource BodyStrongTextBlockStyle}"
-                        Text="No clip open" />
-                    <TextBlock
-                        HorizontalAlignment="Center"
-                        Style="{StaticResource HintText}"
-                        Text="Choose a video above, or press Edit on a clip in Jobs or Library." />
-                </StackPanel>
-            </Border>
+                Padding="12"
+                Style="{StaticResource PaneBorder}">
+                <Grid RowSpacing="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <SelectorBar x:Name="PreviewBar" SelectionChanged="PreviewBar_SelectionChanged">
+                        <SelectorBarItem
+                            x:Name="EditTab"
+                            AutomationProperties.Name="Preview edit"
+                            IsSelected="True"
+                            Text="Edit"
+                            ToolTipService.ToolTip="The timeline as it will be exported" />
+                        <SelectorBarItem
+                            x:Name="SourceTab"
+                            AutomationProperties.Name="Preview source"
+                            Text="Source video"
+                            ToolTipService.ToolTip="The whole video: mark a part to add it or make a new clip" />
+                        <SelectorBarItem
+                            x:Name="VerticalTab"
+                            AutomationProperties.Name="Preview 9:16 export"
+                            IsEnabled="{x:Bind ViewModel.Selected.HasVertical, Mode=OneWay, FallbackValue=False}"
+                            Text="9:16 export" />
+                        <SelectorBarItem
+                            x:Name="HorizontalTab"
+                            AutomationProperties.Name="Preview 16:9 export"
+                            IsEnabled="{x:Bind ViewModel.Selected.HasHorizontal, Mode=OneWay, FallbackValue=False}"
+                            Text="16:9 export" />
+                    </SelectorBar>
 
-            <ScrollViewer Grid.Column="1" Visibility="{x:Bind ViewModel.HasClip, Mode=OneWay}">
-                <StackPanel Padding="0,0,16,24" Spacing="24">
-                    <InfoBar
-                        IsClosable="True"
-                        IsOpen="{x:Bind views:Format.HasText(ViewModel.ErrorMessage), Mode=OneWay}"
-                        Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                        Severity="Error" />
-
-                    <!--  Preview  -->
-                    <Border Padding="16" Style="{StaticResource PanelBorder}">
-                        <StackPanel Spacing="16">
-                            <Grid>
-                                <SelectorBar x:Name="PreviewBar" SelectionChanged="PreviewBar_SelectionChanged">
-                                    <SelectorBarItem
-                                        x:Name="SourceTab"
-                                        AutomationProperties.Name="Preview source"
-                                        IsSelected="True"
-                                        Text="Source" />
-                                    <SelectorBarItem
-                                        x:Name="ExportTab"
-                                        AutomationProperties.Name="Preview export"
-                                        Text="Exported clip" />
-                                </SelectorBar>
-                                <StackPanel
-                                    HorizontalAlignment="Right"
-                                    Orientation="Horizontal"
-                                    Spacing="8">
-                                    <ComboBox
-                                        x:Name="PreviewSpeed"
-                                        MinWidth="88"
-                                        AutomationProperties.Name="Preview speed"
-                                        SelectedIndex="1"
-                                        SelectionChanged="PreviewSpeed_SelectionChanged"
-                                        ToolTipService.ToolTip="Preview speed (does not change the export)">
-                                        <x:String>0.5×</x:String>
-                                        <x:String>1×</x:String>
-                                        <x:String>1.5×</x:String>
-                                        <x:String>2×</x:String>
-                                    </ComboBox>
-                                    <Button AutomationProperties.Name="Play clip" Click="PlayClip_Click">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <FontIcon FontSize="14" Glyph="&#xE768;" />
-                                            <TextBlock Text="Play clip" />
-                                        </StackPanel>
-                                    </Button>
-                                </StackPanel>
-                            </Grid>
+                    <Grid
+                        x:Name="Stage"
+                        Grid.Row="1"
+                        Background="Black"
+                        CornerRadius="{StaticResource ControlCornerRadius}"
+                        SizeChanged="Stage_SizeChanged">
+                        <MediaPlayerElement
+                            x:Name="Player"
+                            AreTransportControlsEnabled="False"
+                            AutomationProperties.Name="Preview player"
+                            Stretch="Uniform" />
+                        <!--  Rough look of the burned-in title and captions (the export has the real style).  -->
+                        <Grid x:Name="Overlay" IsHitTestVisible="False">
                             <Border
-                                Height="360"
-                                Background="Black"
-                                CornerRadius="{StaticResource ControlCornerRadius}">
-                                <MediaPlayerElement
-                                    x:Name="Player"
-                                    AreTransportControlsEnabled="True"
-                                    AutomationProperties.Name="Preview player"
-                                    Stretch="Uniform" />
+                                x:Name="TitleOverlay"
+                                Margin="0,24,0,0"
+                                Padding="12,6"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Top"
+                                Background="#CC000000"
+                                CornerRadius="6"
+                                Visibility="Collapsed">
+                                <TextBlock
+                                    FontWeight="SemiBold"
+                                    Foreground="White"
+                                    Text="{x:Bind ViewModel.ClipTitle, Mode=OneWay}"
+                                    TextWrapping="Wrap" />
                             </Border>
                             <TextBlock
-                                Style="{StaticResource HintText}"
-                                Text="No export yet. Press Export clip to render it."
-                                Visibility="{x:Bind views:Format.Lacks(ViewModel.ExportedVideo), Mode=OneWay}" />
-                        </StackPanel>
-                    </Border>
-
-                    <!--  Trim  -->
-                    <StackPanel Spacing="8">
-                        <Grid>
-                            <TextBlock
-                                VerticalAlignment="Center"
-                                Style="{StaticResource SectionHeaderText}"
-                                Text="Trim" />
-                            <StackPanel
-                                HorizontalAlignment="Right"
-                                Orientation="Horizontal"
-                                Spacing="4">
-                                <TextBlock
-                                    Margin="0,0,12,0"
-                                    VerticalAlignment="Center"
-                                    Style="{StaticResource HintText}">
-                                    <Run Text="Playhead" />
-                                    <Run Text="{x:Bind ViewModel.PositionText, Mode=OneWay}" />
-                                </TextBlock>
-                                <Button
-                                    AutomationProperties.Name="Undo trim"
-                                    Command="{x:Bind ViewModel.UndoTrimCommand}"
-                                    Style="{StaticResource GhostButton}"
-                                    ToolTipService.ToolTip="Undo trim (Ctrl+Z)">
-                                    <FontIcon FontSize="14" Glyph="&#xE7A7;" />
-                                </Button>
-                                <Button
-                                    AutomationProperties.Name="Redo trim"
-                                    Command="{x:Bind ViewModel.RedoTrimCommand}"
-                                    Style="{StaticResource GhostButton}"
-                                    ToolTipService.ToolTip="Redo trim (Ctrl+Y)">
-                                    <FontIcon FontSize="14" Glyph="&#xE7A6;" />
-                                </Button>
-                            </StackPanel>
+                                x:Name="CaptionOverlay"
+                                Margin="24,32"
+                                HorizontalAlignment="Center"
+                                FontWeight="Bold"
+                                HorizontalTextAlignment="Center"
+                                TextWrapping="Wrap" />
                         </Grid>
-                        <Border Padding="20,16" Style="{StaticResource SettingRowBorder}">
-                            <StackPanel Spacing="12">
-                                <!--  The clip's part of the timeline (accent band) under the playhead slider.  -->
-                                <Grid Height="32">
-                                    <Grid
-                                        Height="8"
-                                        Margin="10,0"
-                                        VerticalAlignment="Center"
-                                        Background="{ThemeResource ControlStrongFillColorDisabledBrush}"
-                                        CornerRadius="4">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="{x:Bind views:Format.Stars(ViewModel.BeforeStars), Mode=OneWay}" />
-                                            <ColumnDefinition Width="{x:Bind views:Format.Stars(ViewModel.InsideStars), Mode=OneWay}" />
-                                            <ColumnDefinition Width="{x:Bind views:Format.Stars(ViewModel.AfterStars), Mode=OneWay}" />
-                                        </Grid.ColumnDefinitions>
-                                        <Border
-                                            Grid.Column="1"
-                                            Background="{ThemeResource AccentFillColorDefaultBrush}"
-                                            CornerRadius="4" />
-                                    </Grid>
-                                    <Slider
-                                        x:Name="Timeline"
-                                        VerticalAlignment="Center"
-                                        AutomationProperties.Name="Playhead"
-                                        IsThumbToolTipEnabled="False"
-                                        Maximum="{x:Bind ViewModel.WinEnd, Mode=OneWay}"
-                                        Minimum="{x:Bind ViewModel.WinStart, Mode=OneWay}"
-                                        Opacity="0.9"
-                                        StepFrequency="0.1"
-                                        ValueChanged="Timeline_ValueChanged" />
-                                </Grid>
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Spacing="8">
-                                        <TextBlock Style="{StaticResource HintText}" Text="Start" />
-                                        <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="{x:Bind ViewModel.StartText, Mode=OneWay}" />
-                                        <StackPanel Orientation="Horizontal" Spacing="4">
-                                            <Button
-                                                AutomationProperties.Name="Start 1 second earlier"
-                                                Command="{x:Bind ViewModel.NudgeStartCommand}"
-                                                CommandParameter="-1"
-                                                Content="−1s" />
-                                            <Button
-                                                AutomationProperties.Name="Start 1 second later"
-                                                Command="{x:Bind ViewModel.NudgeStartCommand}"
-                                                CommandParameter="1"
-                                                Content="+1s" />
-                                            <Button
-                                                AutomationProperties.Name="Set start to playhead"
-                                                Command="{x:Bind ViewModel.SetStartCommand}"
-                                                Content="Set to playhead" />
-                                        </StackPanel>
-                                    </StackPanel>
-                                    <StackPanel
-                                        Grid.Column="1"
-                                        VerticalAlignment="Center"
-                                        Spacing="2">
-                                        <TextBlock
-                                            HorizontalAlignment="Center"
-                                            Style="{StaticResource HintText}"
-                                            Text="Length" />
-                                        <TextBlock
-                                            HorizontalAlignment="Center"
-                                            Style="{StaticResource BodyStrongTextBlockStyle}"
-                                            Text="{x:Bind ViewModel.LengthText, Mode=OneWay}" />
-                                    </StackPanel>
-                                    <StackPanel
-                                        Grid.Column="2"
-                                        HorizontalAlignment="Right"
-                                        Spacing="8">
-                                        <TextBlock
-                                            HorizontalAlignment="Right"
-                                            Style="{StaticResource HintText}"
-                                            Text="End" />
-                                        <TextBlock
-                                            HorizontalAlignment="Right"
-                                            Style="{StaticResource SubtitleTextBlockStyle}"
-                                            Text="{x:Bind ViewModel.EndText, Mode=OneWay}" />
-                                        <StackPanel Orientation="Horizontal" Spacing="4">
-                                            <Button
-                                                AutomationProperties.Name="Set end to playhead"
-                                                Command="{x:Bind ViewModel.SetEndCommand}"
-                                                Content="Set to playhead" />
-                                            <Button
-                                                AutomationProperties.Name="End 1 second earlier"
-                                                Command="{x:Bind ViewModel.NudgeEndCommand}"
-                                                CommandParameter="-1"
-                                                Content="−1s" />
-                                            <Button
-                                                AutomationProperties.Name="End 1 second later"
-                                                Command="{x:Bind ViewModel.NudgeEndCommand}"
-                                                CommandParameter="1"
-                                                Content="+1s" />
-                                        </StackPanel>
-                                    </StackPanel>
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-
-                    <!--  Transcript: click a word to move the playhead there.  -->
-                    <StackPanel Spacing="8">
-                        <Grid>
-                            <TextBlock Style="{StaticResource SectionHeaderText}" Text="Transcript" />
-                            <TextBlock
-                                HorizontalAlignment="Right"
-                                Style="{StaticResource HintText}"
-                                Text="Click a word to jump there" />
-                        </Grid>
-                        <Border Padding="20,16" Style="{StaticResource SettingRowBorder}">
-                            <RichTextBlock
-                                x:Name="Transcript"
-                                AutomationProperties.Name="Transcript"
-                                IsTextSelectionEnabled="False"
-                                LineHeight="26" />
-                        </Border>
-                    </StackPanel>
-
-                    <!--  Text  -->
-                    <StackPanel Spacing="8">
-                        <TextBlock Style="{StaticResource SectionHeaderText}" Text="Title and captions" />
-                        <TextBox
-                            AutomationProperties.Name="Clip title"
-                            Header="Title"
-                            MaxLength="120"
-                            Text="{x:Bind ViewModel.ClipTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                        <TextBox
-                            MinHeight="120"
-                            AcceptsReturn="True"
-                            AutomationProperties.Name="Caption text"
-                            Header="Caption text"
-                            Text="{x:Bind ViewModel.CaptionText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                            TextWrapping="Wrap" />
-                        <TextBlock Style="{StaticResource HintText}" Text="Fix misheard words here. Word timing is kept; added or removed words share the original timing." />
-                    </StackPanel>
-
-                    <!--  Export  -->
-                    <StackPanel Spacing="8">
-                        <TextBlock Style="{StaticResource SectionHeaderText}" Text="Export" />
-                        <Border Padding="20,16" Style="{StaticResource SettingRowBorder}">
-                            <StackPanel Spacing="16">
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition />
-                                        <ColumnDefinition />
-                                        <ColumnDefinition />
-                                    </Grid.ColumnDefinitions>
-                                    <ComboBox
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="Format"
-                                        Header="Format"
-                                        ItemsSource="{x:Bind vm:EditorViewModel.Formats}"
-                                        SelectedIndex="{x:Bind ViewModel.FormatIndex, Mode=TwoWay}" />
-                                    <ComboBox
-                                        Grid.Column="1"
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="Framing"
-                                        Header="Framing"
-                                        ItemsSource="{x:Bind vm:EditorViewModel.Framings}"
-                                        SelectedIndex="{x:Bind ViewModel.FramingIndex, Mode=TwoWay}" />
-                                    <ComboBox
-                                        Grid.Column="2"
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="Caption style"
-                                        Header="Caption style"
-                                        ItemsSource="{x:Bind ViewModel.CaptionStyles}"
-                                        SelectedIndex="{x:Bind ViewModel.CaptionStyleIndex, Mode=TwoWay}">
-                                        <ComboBox.ItemTemplate>
-                                            <DataTemplate x:DataType="models:CaptionPreset">
-                                                <TextBlock Text="{x:Bind Name}" />
-                                            </DataTemplate>
-                                        </ComboBox.ItemTemplate>
-                                    </ComboBox>
-                                </Grid>
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition />
-                                        <ColumnDefinition />
-                                        <ColumnDefinition />
-                                    </Grid.ColumnDefinitions>
-                                    <ComboBox
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="Caption position"
-                                        Header="Caption position"
-                                        ItemsSource="{x:Bind vm:EditorViewModel.Positions}"
-                                        SelectedIndex="{x:Bind ViewModel.CaptionPositionIndex, Mode=TwoWay}" />
-                                    <Slider
-                                        Grid.Column="1"
-                                        AutomationProperties.Name="Caption size"
-                                        Header="Caption size (%)"
-                                        Maximum="160"
-                                        Minimum="60"
-                                        StepFrequency="5"
-                                        Value="{x:Bind ViewModel.CaptionSize, Mode=TwoWay}" />
-                                    <ComboBox
-                                        Grid.Column="2"
-                                        HorizontalAlignment="Stretch"
-                                        AutomationProperties.Name="Export speed"
-                                        Header="Speed"
-                                        ItemsSource="{x:Bind vm:EditorViewModel.Speeds}"
-                                        SelectedIndex="{x:Bind ViewModel.SpeedIndex, Mode=TwoWay}" />
-                                </Grid>
-                                <StackPanel Orientation="Horizontal" Spacing="24">
-                                    <CheckBox
-                                        AutomationProperties.Name="Fade in and out"
-                                        Content="Fade in and out"
-                                        IsChecked="{x:Bind ViewModel.Fade, Mode=TwoWay}" />
-                                    <CheckBox
-                                        AutomationProperties.Name="Burn in captions"
-                                        Content="Captions"
-                                        IsChecked="{x:Bind ViewModel.BurnCaptions, Mode=TwoWay}" />
-                                    <CheckBox
-                                        AutomationProperties.Name="Title at the top"
-                                        Content="Title at the top"
-                                        IsChecked="{x:Bind ViewModel.ShowTitle, Mode=TwoWay}" />
-                                    <CheckBox
-                                        AutomationProperties.Name="Cut dead air"
-                                        Content="Cut dead air"
-                                        IsChecked="{x:Bind ViewModel.CutDeadAir, Mode=TwoWay}" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-
-                    <TextBlock Style="{StaticResource HintText}" Text="Shortcuts: Space play or pause · I / O set start / end · ← / → 1 s · N new clip · Ctrl+Z / Ctrl+Y undo / redo trim · Ctrl+S save · Ctrl+E export" />
-
-                    <!--  Actions  -->
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
+                        <!--  Nothing open.  -->
                         <StackPanel
+                            HorizontalAlignment="Center"
                             VerticalAlignment="Center"
-                            Orientation="Horizontal"
-                            Spacing="12">
-                            <ProgressRing
-                                Width="16"
-                                Height="16"
-                                IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                            Spacing="6"
+                            Visibility="{x:Bind ViewModel.NoClip, Mode=OneWay}">
+                            <FontIcon
+                                FontSize="28"
+                                Foreground="#99FFFFFF"
+                                Glyph="&#xE714;" />
                             <TextBlock
-                                VerticalAlignment="Center"
-                                AutomationProperties.LiveSetting="Polite"
-                                Style="{StaticResource DescriptionText}"
-                                Text="{x:Bind ViewModel.Status, Mode=OneWay}" />
-                        </StackPanel>
-                        <StackPanel
-                            Grid.Column="1"
-                            Orientation="Horizontal"
-                            Spacing="8">
-                            <Button
-                                AutomationProperties.Name="Undo changes"
-                                Command="{x:Bind ViewModel.RevertCommand}"
-                                Content="Undo changes"
-                                Style="{StaticResource GhostButton}" />
-                            <Button
-                                AutomationProperties.Name="Save"
-                                Command="{x:Bind ViewModel.SaveCommand}"
-                                Content="Save" />
-                            <Button
-                                AutomationProperties.Name="Export clip"
-                                Command="{x:Bind ViewModel.ExportCommand}"
-                                Content="Export clip"
-                                Style="{StaticResource PillAccentButton}" />
+                                HorizontalAlignment="Center"
+                                Foreground="White"
+                                Style="{StaticResource BodyStrongTextBlockStyle}"
+                                Text="No clip open" />
+                            <TextBlock
+                                HorizontalAlignment="Center"
+                                Foreground="#B3FFFFFF"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="Pick a video above, or create clips first." />
                         </StackPanel>
                     </Grid>
 
-                    <Border Style="{StaticResource SettingRowBorder}" Visibility="{x:Bind views:Format.Has(ViewModel.ExportedVideo), Mode=OneWay}">
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon Glyph="&#xE8B7;" Style="{StaticResource SettingIcon}" />
-                            <StackPanel
-                                Grid.Column="1"
-                                VerticalAlignment="Center"
-                                Spacing="2">
-                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="Exported files" />
-                                <TextBlock
-                                    Style="{StaticResource HintText}"
-                                    Text="{x:Bind ViewModel.ExportedVideo, Mode=OneWay}"
-                                    TextTrimming="CharacterEllipsis"
-                                    TextWrapping="NoWrap" />
-                                <TextBlock Style="{StaticResource HintText}" Text="MP4, SRT captions and a Premiere Pro timeline (.xml): in Premiere, File › Import the .xml." />
+                    <!--  Transport (Edit). Source and exports use the player's own controls.  -->
+                    <Grid
+                        Grid.Row="2"
+                        ColumnSpacing="8"
+                        Visibility="{x:Bind ViewModel.IsEditPreview, Mode=OneWay}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontFamily="Consolas"
+                            FontSize="13"
+                            Text="{x:Bind ViewModel.PositionText, Mode=OneWay}"
+                            TextWrapping="NoWrap" />
+                        <StackPanel
+                            Grid.Column="1"
+                            HorizontalAlignment="Center"
+                            Orientation="Horizontal"
+                            Spacing="4">
+                            <Button
+                                AutomationProperties.Name="Go to start"
+                                Click="ToStart_Click"
+                                Style="{StaticResource ToolButton}"
+                                ToolTipService.ToolTip="Go to start (Home)">
+                                <FontIcon FontSize="14" Glyph="&#xE892;" />
+                            </Button>
+                            <Button
+                                AutomationProperties.Name="Back 1 second"
+                                Click="Back_Click"
+                                Style="{StaticResource ToolButton}"
+                                ToolTipService.ToolTip="Back 1 s (←, Shift+← 5 s)">
+                                <FontIcon FontSize="14" Glyph="&#xED3C;" />
+                            </Button>
+                            <Button
+                                x:Name="PlayButton"
+                                AutomationProperties.Name="Play"
+                                Click="Play_Click"
+                                Style="{StaticResource AccentButtonStyle}"
+                                ToolTipService.ToolTip="Play / pause (Space)">
+                                <FontIcon
+                                    x:Name="PlayGlyph"
+                                    FontSize="14"
+                                    Glyph="&#xE768;" />
+                            </Button>
+                            <Button
+                                AutomationProperties.Name="Forward 1 second"
+                                Click="Forward_Click"
+                                Style="{StaticResource ToolButton}"
+                                ToolTipService.ToolTip="Forward 1 s (→, Shift+→ 5 s)">
+                                <FontIcon FontSize="14" Glyph="&#xED3D;" />
+                            </Button>
+                            <ToggleButton
+                                x:Name="LoopToggle"
+                                Padding="9,7"
+                                AutomationProperties.Name="Loop"
+                                ToolTipService.ToolTip="Loop playback">
+                                <FontIcon FontSize="14" Glyph="&#xE8EE;" />
+                            </ToggleButton>
+                        </StackPanel>
+                        <ComboBox
+                            x:Name="PreviewSpeed"
+                            Grid.Column="2"
+                            MinWidth="80"
+                            HorizontalAlignment="Right"
+                            AutomationProperties.Name="Preview speed"
+                            SelectedIndex="1"
+                            SelectionChanged="PreviewSpeed_SelectionChanged"
+                            ToolTipService.ToolTip="Preview speed (the export uses Speed in Look)">
+                            <x:String>0.5×</x:String>
+                            <x:String>1×</x:String>
+                            <x:String>1.5×</x:String>
+                            <x:String>2×</x:String>
+                        </ComboBox>
+                    </Grid>
+
+                    <!--  Source: mark a part of the whole video.  -->
+                    <Grid
+                        Grid.Row="2"
+                        ColumnSpacing="8"
+                        Visibility="{x:Bind ViewModel.IsSourcePreview, Mode=OneWay}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <Button
+                                AutomationProperties.Name="Mark in"
+                                Command="{x:Bind ViewModel.SetMarkInCommand}"
+                                Content="In"
+                                ToolTipService.ToolTip="Mark the start of a part (I)" />
+                            <Button
+                                AutomationProperties.Name="Mark out"
+                                Command="{x:Bind ViewModel.SetMarkOutCommand}"
+                                Content="Out"
+                                ToolTipService.ToolTip="Mark the end of a part (O)" />
+                        </StackPanel>
+                        <TextBlock
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource HintText}"
+                            Text="{x:Bind ViewModel.MarksText, Mode=OneWay}"
+                            TextTrimming="CharacterEllipsis"
+                            TextWrapping="NoWrap" />
+                        <Button
+                            Grid.Column="2"
+                            AutomationProperties.Name="Add marked part to timeline"
+                            Command="{x:Bind ViewModel.AddMarkedCommand}"
+                            ToolTipService.ToolTip="Add the marked part after the selected part">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontSize="14" Glyph="&#xE710;" />
+                                <TextBlock Text="Add to timeline" />
                             </StackPanel>
+                        </Button>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!--  Inspector  -->
+            <Border
+                Grid.Column="2"
+                Style="{StaticResource PaneBorder}"
+                Visibility="{x:Bind ViewModel.HasClip, Mode=OneWay}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <SelectorBar
+                        x:Name="InspectorBar"
+                        Margin="8,4,8,0"
+                        SelectionChanged="InspectorBar_SelectionChanged">
+                        <SelectorBarItem
+                            x:Name="ClipTab"
+                            IsSelected="True"
+                            Text="Clip" />
+                        <SelectorBarItem x:Name="CaptionsTab" Text="Captions" />
+                        <SelectorBarItem x:Name="LookTab" Text="Look" />
+                    </SelectorBar>
+                    <ScrollViewer x:Name="InspectorScroll" Grid.Row="1">
+                        <Grid Padding="16,8,16,16">
+                            <!--  Clip  -->
+                            <StackPanel x:Name="ClipPanel" Spacing="16">
+                                <TextBox
+                                    AutomationProperties.Name="Clip title"
+                                    Header="Title"
+                                    MaxLength="120"
+                                    Text="{x:Bind ViewModel.ClipTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    TextWrapping="Wrap" />
+                                <ToggleSwitch
+                                    AutomationProperties.Name="Title at the top"
+                                    Header="Show the title over the video"
+                                    IsOn="{x:Bind ViewModel.ShowTitle, Mode=TwoWay}" />
+                                <StackPanel Spacing="4">
+                                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Length" />
+                                    <TextBlock Style="{StaticResource DescriptionText}">
+                                        <Run Text="{x:Bind ViewModel.LengthText, Mode=OneWay}" />
+                                        <Run Text="·" />
+                                        <Run Text="{x:Bind ViewModel.Segments.Count, Mode=OneWay}" />
+                                        <Run Text="part(s)" />
+                                    </TextBlock>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Before speed and dead-air cuts." />
+                                </StackPanel>
+                                <StackPanel Spacing="6">
+                                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="How to edit" />
+                                    <TextBlock Style="{StaticResource HintText}" Text="Split a part at the playhead (S), drag its edges to trim, drag it to reorder, Delete removes it. Add another clip, or mark any part of the video under Source video, to stitch it in." />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!--  Captions  -->
                             <StackPanel
-                                Grid.Column="2"
-                                VerticalAlignment="Center"
-                                Orientation="Horizontal"
-                                Spacing="8">
-                                <Button
-                                    AutomationProperties.Name="Show in folder"
-                                    Command="{x:Bind ViewModel.RevealVideoCommand}"
-                                    Content="Show in folder" />
-                                <Button
-                                    AutomationProperties.Name="Show Premiere XML"
-                                    Command="{x:Bind ViewModel.RevealXmlCommand}"
-                                    Content="Show .xml" />
+                                x:Name="CaptionsPanel"
+                                Spacing="16"
+                                Visibility="Collapsed">
+                                <ToggleSwitch
+                                    AutomationProperties.Name="Burn in captions"
+                                    Header="Captions"
+                                    IsOn="{x:Bind ViewModel.BurnCaptions, Mode=TwoWay}" />
+                                <ComboBox
+                                    HorizontalAlignment="Stretch"
+                                    AutomationProperties.Name="Caption style"
+                                    Header="Style"
+                                    ItemsSource="{x:Bind ViewModel.CaptionStyles}"
+                                    SelectedIndex="{x:Bind ViewModel.CaptionStyleIndex, Mode=TwoWay}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="models:CaptionPreset">
+                                            <StackPanel Spacing="2">
+                                                <TextBlock Text="{x:Bind Name}" />
+                                                <TextBlock Style="{StaticResource HintText}" Text="{x:Bind Description}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <RadioButtons
+                                    AutomationProperties.Name="Caption position"
+                                    Header="Position"
+                                    MaxColumns="3"
+                                    SelectedIndex="{x:Bind ViewModel.CaptionPositionIndex, Mode=TwoWay}">
+                                    <x:String>Bottom</x:String>
+                                    <x:String>Middle</x:String>
+                                    <x:String>Top</x:String>
+                                </RadioButtons>
+                                <Slider
+                                    AutomationProperties.Name="Caption size"
+                                    Header="Size (%)"
+                                    Maximum="160"
+                                    Minimum="60"
+                                    StepFrequency="5"
+                                    Value="{x:Bind ViewModel.CaptionSize, Mode=TwoWay}" />
+                                <StackPanel Spacing="8">
+                                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Text" />
+                                    <TextBlock Style="{StaticResource HintText}" Text="Fix misheard words. Word timing is kept; added or removed words share it." />
+                                    <ItemsControl ItemsSource="{x:Bind ViewModel.Segments}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:Segment">
+                                                <TextBox
+                                                    Margin="0,0,0,8"
+                                                    AcceptsReturn="False"
+                                                    AutomationProperties.Name="{x:Bind TextName, Mode=OneWay}"
+                                                    Header="{x:Bind Label, Mode=OneWay}"
+                                                    Text="{x:Bind Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                    TextWrapping="Wrap" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!--  Look  -->
+                            <StackPanel
+                                x:Name="LookPanel"
+                                Spacing="16"
+                                Visibility="Collapsed">
+                                <RadioButtons
+                                    AutomationProperties.Name="Format"
+                                    Header="Format"
+                                    MaxColumns="2"
+                                    SelectedIndex="{x:Bind ViewModel.FormatIndex, Mode=TwoWay}">
+                                    <x:String>Vertical 9:16</x:String>
+                                    <x:String>Horizontal 16:9</x:String>
+                                </RadioButtons>
+                                <ComboBox
+                                    HorizontalAlignment="Stretch"
+                                    AutomationProperties.Name="Framing"
+                                    Header="Framing"
+                                    IsEnabled="{x:Bind ViewModel.IsVertical, Mode=OneWay}"
+                                    ItemsSource="{x:Bind vm:EditorViewModel.Framings}"
+                                    SelectedIndex="{x:Bind ViewModel.FramingIndex, Mode=TwoWay}" />
+                                <ComboBox
+                                    HorizontalAlignment="Stretch"
+                                    AutomationProperties.Name="Export speed"
+                                    Header="Speed"
+                                    ItemsSource="{x:Bind vm:EditorViewModel.Speeds}"
+                                    SelectedIndex="{x:Bind ViewModel.SpeedIndex, Mode=TwoWay}" />
+                                <ToggleSwitch
+                                    AutomationProperties.Name="Fade in and out"
+                                    Header="Fade in and out"
+                                    IsOn="{x:Bind ViewModel.Fade, Mode=TwoWay}" />
+                                <ToggleSwitch
+                                    AutomationProperties.Name="Cut dead air"
+                                    Header="Cut pauses and filler words"
+                                    IsOn="{x:Bind ViewModel.CutDeadAir, Mode=TwoWay}" />
                             </StackPanel>
                         </Grid>
-                    </Border>
-                </StackPanel>
-            </ScrollViewer>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
         </Grid>
+
+        <!--  Timeline  -->
+        <Border
+            Grid.Row="3"
+            Padding="8,6,8,8"
+            Style="{StaticResource PaneBorder}">
+            <Grid RowSpacing="4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="2">
+                        <Button
+                            AutomationProperties.Name="Undo"
+                            Command="{x:Bind ViewModel.UndoCommand}"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Undo (Ctrl+Z)">
+                            <FontIcon FontSize="14" Glyph="&#xE7A7;" />
+                        </Button>
+                        <Button
+                            AutomationProperties.Name="Redo"
+                            Command="{x:Bind ViewModel.RedoCommand}"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Redo (Ctrl+Y)">
+                            <FontIcon FontSize="14" Glyph="&#xE7A6;" />
+                        </Button>
+                        <AppBarSeparator />
+                        <Button
+                            AutomationProperties.Name="Split at playhead"
+                            Command="{x:Bind ViewModel.SplitCommand}"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Split at the playhead (S)">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontSize="14" Glyph="&#xE8C6;" />
+                                <TextBlock Text="Split" />
+                            </StackPanel>
+                        </Button>
+                        <Button
+                            AutomationProperties.Name="Trim start to playhead"
+                            Command="{x:Bind ViewModel.TrimStartCommand}"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Cut from the part's start to the playhead (Q)">
+                            <FontIcon FontSize="14" Glyph="&#xE76B;" />
+                        </Button>
+                        <Button
+                            AutomationProperties.Name="Trim end to playhead"
+                            Command="{x:Bind ViewModel.TrimEndCommand}"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Cut from the playhead to the part's end (W)">
+                            <FontIcon FontSize="14" Glyph="&#xE76C;" />
+                        </Button>
+                        <Button
+                            AutomationProperties.Name="Delete part"
+                            Command="{x:Bind ViewModel.DeleteSegmentCommand}"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Delete the selected part (Delete)">
+                            <FontIcon FontSize="14" Glyph="&#xE74D;" />
+                        </Button>
+                        <AppBarSeparator />
+                        <Button
+                            x:Name="AddClipButton"
+                            AutomationProperties.Name="Add a clip to the timeline"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Stitch another clip in after the selected part">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontSize="14" Glyph="&#xECC8;" />
+                                <TextBlock Text="Add clip" />
+                                <FontIcon FontSize="10" Glyph="&#xE70D;" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <MenuFlyout x:Name="AddClipMenu" Opening="AddClipMenu_Opening" />
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
+                    <StackPanel
+                        HorizontalAlignment="Right"
+                        Orientation="Horizontal"
+                        Spacing="2">
+                        <Button
+                            AutomationProperties.Name="Zoom out"
+                            Click="ZoomOut_Click"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Zoom out (−, Ctrl+wheel)">
+                            <FontIcon FontSize="14" Glyph="&#xE71F;" />
+                        </Button>
+                        <Button
+                            AutomationProperties.Name="Fit timeline"
+                            Click="Fit_Click"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Fit the whole clip">
+                            <FontIcon FontSize="14" Glyph="&#xE9A6;" />
+                        </Button>
+                        <Button
+                            AutomationProperties.Name="Zoom in"
+                            Click="ZoomIn_Click"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Zoom in (+, Ctrl+wheel)">
+                            <FontIcon FontSize="14" Glyph="&#xE8A3;" />
+                        </Button>
+                        <Button
+                            AutomationProperties.Name="Keyboard shortcuts"
+                            Style="{StaticResource ToolButton}"
+                            ToolTipService.ToolTip="Keyboard shortcuts">
+                            <FontIcon FontSize="14" Glyph="&#xE765;" />
+                            <Button.Flyout>
+                                <Flyout>
+                                    <TextBlock
+                                        LineHeight="22"
+                                        Style="{StaticResource BodyTextBlockStyle}"
+                                        Text="Space  play / pause&#x0a;← →  1 s  (Shift: 5 s)   Home  start&#x0a;S  split   Q / W  trim to playhead&#x0a;Delete  delete part&#x0a;I / O  mark in / out (Source video)&#x0a;N  new clip&#x0a;Ctrl+Z / Ctrl+Y  undo / redo&#x0a;Ctrl+E  export   + / −  zoom" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+                <views:TimelineView
+                    x:Name="Timeline"
+                    Grid.Row="1"
+                    Height="140" />
+            </Grid>
+        </Border>
     </Grid>
 </Page>

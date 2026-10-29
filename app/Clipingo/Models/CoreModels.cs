@@ -20,7 +20,13 @@ public sealed record ToolStatus(string Name, string Purpose, bool Required, bool
 
 public sealed record EncoderStatus(string Name, string Label, bool Works, string? Error, string? Hint);
 
-public sealed record Candidate(double Start, double End, int Score, int Rank, string Title, IReadOnlyList<string> Reasons, IReadOnlyList<string> Keywords);
+/// <summary>A clip. <c>Segments</c>: source ranges played one after another (cut and stitched in the editor); null = Start..End.</summary>
+public sealed record Candidate(double Start, double End, int Score, int Rank, string Title, IReadOnlyList<string> Reasons, IReadOnlyList<string> Keywords, IReadOnlyList<double[]>? Segments = null)
+{
+    public IEnumerable<(double Start, double End)> Pieces => Segments is { Count: > 0 } s ? s.Select(p => (p[0], p[1])) : [(Start, End)];
+
+    public double Length => Pieces.Sum(p => p.End - p.Start);
+}
 
 public sealed record TranscriptSummary(string Model, string? Language, int Words);
 

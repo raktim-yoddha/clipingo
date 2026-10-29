@@ -12,6 +12,9 @@ public static class Format
     public static ImageSource? Image(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? new BitmapImage(uri) : null;
 
+    /// <summary>A local image file (thumbnails), or null.</summary>
+    public static ImageSource? File(string? path) => string.IsNullOrEmpty(path) ? null : new BitmapImage(new Uri(path));
+
     public static Visibility Not(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
 
     public static Visibility Both(bool a, bool b) => a && b ? Visibility.Visible : Visibility.Collapsed;
