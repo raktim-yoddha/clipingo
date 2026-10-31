@@ -1,4 +1,4 @@
-# Push a tag like v0.2.0 (matching <Version> in app/Clipingo/Clipingo.csproj) to publish a release with the
+# Push a tag like v0.2.0 (matching <Version> in platforms/windows/Clipingo/Clipingo.csproj) to publish a release with the
 # Windows installer. The app's auto-update reads the latest release's Clipingo-Setup-*.exe asset.
 name: release
 
@@ -21,13 +21,13 @@ jobs:
       - name: Check the tag matches the app version
         shell: pwsh
         run: |
-          $version = ([xml](Get-Content app/Clipingo/Clipingo.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          $version = ([xml](Get-Content platforms/windows/Clipingo/Clipingo.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
           if ("v$version" -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} does not match app version $version" }
       - name: Test the core
         run: cargo test --workspace
       - name: Build the installer
         shell: pwsh
-        run: ./installer/build.ps1
+        run: ./platforms/windows/installer/build.ps1
       - name: Publish the release
         shell: pwsh
         env:

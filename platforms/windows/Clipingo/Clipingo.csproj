@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>Clipingo</RootNamespace>
+    <!-- The release version: the installer and the GitHub release tag (v0.2.0) use the same number. -->
+    <Version>0.2.0</Version>
+    <Product>Clipingo</Product>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="Exists('Assets\AppIcon.ico')">Assets\AppIcon.ico</ApplicationIcon>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
+    <PublishProfile Condition="Exists('Properties\PublishProfiles\win-$(Platform).pubxml')">win-$(Platform).pubxml</PublishProfile>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <!-- Unpackaged Win32 app on Windows' shared Windows App Runtime (ADR 0006). Program.cs starts it, and offers it when missing. -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
+    <WindowsAppSdkIncludeVersionInfo>true</WindowsAppSdkIncludeVersionInfo>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Generates Clipingo.pri (compiled XAML resources) for publish too; the app stays unpackaged. -->
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <!-- Only the parts the app uses (the Microsoft.WindowsAppSDK metapackage adds AI, ML, Search and Widgets: ~100 MB). -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.6" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.3.9" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.1.6" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Base" Version="2.0.4" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="2.1.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.4.0" />
+  </ItemGroup>
+
+  <!-- Release: Native AOT, one small native exe: no .NET runtime, no JIT, quicker start and less memory (ADR 0006). -->
+  <PropertyGroup Condition="'$(Configuration)' != 'Debug'">
+    <PublishAot>true</PublishAot>
+    <OptimizationPreference>Size</OptimizationPreference>
+    <!-- WinRT interop from source generators instead of reflection. -->
+    <CsWinRTAotOptimizerEnabled>true</CsWinRTAotOptimizerEnabled>
+    <CsWinRTAotWarningLevel>2</CsWinRTAotWarningLevel>
+    <IsAotCompatible>true</IsAotCompatible>
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <StackTraceSupport>false</StackTraceSupport>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+    <EventSourceSupport>false</EventSourceSupport>
+    <DebuggerSupport>false</DebuggerSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
+  </PropertyGroup>
+</Project>
