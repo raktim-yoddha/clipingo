@@ -64,8 +64,11 @@ pub struct RunOptions {
     pub find: Option<FindOptions>,
 }
 
+/// Saved runs. `CLIPINGO_RUNS_DIR` overrides (tests keep out of your Library).
 pub fn runs_dir() -> PathBuf {
-    crate::data_dir().join("runs")
+    std::env::var_os("CLIPINGO_RUNS_DIR")
+        .filter(|d| !d.is_empty())
+        .map_or_else(|| crate::data_dir().join("runs"), PathBuf::from)
 }
 
 fn new_run_id() -> String {
@@ -341,6 +344,7 @@ pub fn add_clip(id: &str, start: f64, end: f64, title: &str) -> Result<Candidate
         reasons: vec!["Added by you".into()],
         keywords: Vec::new(),
         segments: Vec::new(),
+        layouts: Vec::new(),
     });
     save_run(&run)?;
     edit_clip(id, &ClipEdit { rank, start, end, title: title.to_string(), ..Default::default() }).inspect_err(|_| {
@@ -356,6 +360,27 @@ pub fn delete_run(id: &str) -> Result<()> {
     // The folder from the id, never the `dir` written in run.json.
     let dir = runs_dir().join(id);
     std::fs::remove_dir_all(&dir).with_context(|| format!("cannot delete {}", dir.display()))
+}
+
+/// Sets (or with `None` clears) the layout you chose for the shot around source time `at`; `shot` is that shot's
+/// source range, and an earlier choice inside it is replaced.
+pub fn set_layout(
+    id: &str,
+    rank: usize,
+    at: f64,
+    shot: (f64, f64),
+    layout: Option<crate::framing::Layout>,
+) -> Result<Candidate> {
+    let (mut run, _) = load_run(id)?;
+    let c =
+        run.candidates.iter_mut().find(|c| c.rank == rank).with_context(|| format!("no clip #{rank} in this run"))?;
+    c.layouts.retain(|l| !(shot.0..shot.1).contains(&l.0));
+    if let Some(l) = layout {
+        c.layouts.push((at, l));
+    }
+    let out = c.clone();
+    save_run(&run)?;
+    Ok(out)
 }
 
 /// Removes a clip from the run (its exported files stay where they are).

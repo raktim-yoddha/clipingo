@@ -273,6 +273,9 @@ pub struct Candidate {
     /// Source ranges played one after another (cut and stitched in the editor). Empty: just `start..end`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub segments: Vec<(f64, f64)>,
+    /// Layouts you chose in the editor: a source time inside the shot, and the layout.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layouts: Vec<(f64, crate::framing::Layout)>,
 }
 
 impl Candidate {
@@ -479,9 +482,22 @@ pub fn find(words: &[Word], opts: &FindOptions, loud: Option<&Loudness>) -> Vec<
         .enumerate()
         .map(|(k, c)| {
             let last_word = sents[c.j].words.last().expect("sentence has words");
-            let next_start = words.iter().find(|w| w.start >= last_word.end).map(|w| w.start);
+            // The next word by start: word ends can overlap it (`clip eval` caught a clip ending inside it).
+            let next_start = words.iter().find(|w| w.start > last_word.start).map(|w| w.start);
+            // Opening on "And so…" reads as mid-thought (`clip eval` measured a quarter of clips doing it): start on
+            // what follows them.
+            let sent = sents[c.i].words;
+            let lex = lexicon();
+            let leading = sent
+                .iter()
+                .take(2.min(sent.len().saturating_sub(4)))
+                .take_while(|w| lex.cont.contains(&norm(&w.text).trim()))
+                .count();
+            // A little lead-in, but never into the previous word (`clip eval` caught clips opening on its tail).
+            let first = &sent[leading];
+            let prev_end = words.iter().rev().find(|w| w.start < first.start).map_or(0.0, |w| w.end.min(first.start));
             Candidate {
-                start: (sents[c.i].words[0].start - 0.12).max(0.0),
+                start: (first.start - 0.12).max(prev_end).max(0.0),
                 end: next_start.map_or(last_word.end + 0.5, |s| s - 0.03).min(last_word.end + 0.4),
                 score: (62.0 + 37.0 * (c.raw - p50) / (max - p50).max(1e-6)).clamp(35.0, 99.0).round() as u32,
                 rank: k + 1,
@@ -489,6 +505,7 @@ pub fn find(words: &[Word], opts: &FindOptions, loud: Option<&Loudness>) -> Vec<
                 reasons: reasons_for(c),
                 keywords: c.top.iter().filter(|t| t.chars().count() > 3).take(4).cloned().collect(),
                 segments: Vec::new(),
+                layouts: Vec::new(),
             }
         })
         .collect()
@@ -624,6 +641,43 @@ mod tests {
 
         let early = FindOptions { within: Some((0.0, 30.0)), count: Some(5), ..Default::default() };
         assert!(find(&words, &early, None).iter().all(|c| (c.start + c.end) / 2.0 <= 30.5));
+    }
+
+    #[test]
+    fn clips_never_open_on_the_previous_words_tail() {
+        // whisper-style words: each runs until the next one starts, so a fixed lead-in lands inside the previous word.
+        let lines = ["so that was it.", "Why does nobody tell you this about money?", "Because it is boring and slow."];
+        let mut words = transcript(&lines.repeat(8), 2.5);
+        for i in 0..words.len() - 1 {
+            words[i].end = words[i + 1].start;
+        }
+        let found =
+            find(&words, &FindOptions { min_len: 5.0, max_len: 20.0, count: Some(5), ..Default::default() }, None);
+        assert!(!found.is_empty());
+        for c in crate::eval::clips(&found, &words) {
+            assert!(!c.cuts_a_word, "clip #{} starts or ends inside a word", c.rank);
+        }
+    }
+
+    #[test]
+    fn clips_do_not_open_mid_thought_or_end_inside_a_word() {
+        let lines = [
+            "That was the end of it.",
+            "And so nobody ever told me the real secret about money?",
+            "It cost me a million dollars.",
+        ];
+        let mut words = transcript(&lines.repeat(8), 2.5);
+        // Word ends overlap the next word a little, as lag-corrected times do.
+        for w in &mut words {
+            w.end += 0.1;
+        }
+        let found =
+            find(&words, &FindOptions { min_len: 5.0, max_len: 20.0, count: Some(5), ..Default::default() }, None);
+        assert!(!found.is_empty());
+        for c in crate::eval::clips(&found, &words) {
+            assert!(!c.opens_mid_thought, "clip #{} opens mid-thought", c.rank);
+            assert!(!c.cuts_a_word, "clip #{} is cut inside a word", c.rank);
+        }
     }
 
     #[test]

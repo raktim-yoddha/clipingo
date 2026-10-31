@@ -262,16 +262,21 @@ struct WhisperOffsets {
     from: i64,
 }
 
+/// DTW token times trail the sound: `clip eval` measured words starting 0.19 s late against a TTS fixture's exact
+/// word times and 0.22 s late against TED's human captions. Word starts are moved back by this much.
+const DTW_LAG_S: f64 = 0.2;
+
 /// whisper-cli `-ojf` output for one chunk → words on the source timeline (`to_source` maps chunk seconds).
-/// A word starts at its first token's DTW time and runs to the next word (`audio::refine_words` trims pauses);
-/// punctuation-only words join the previous word.
+/// A word starts at its first token's DTW time (less `DTW_LAG_S`) and runs to the next word (`audio::refine_words`
+/// trims pauses); punctuation-only words join the previous word.
 pub fn parse_whisper_json(json: &str, to_source: &dyn Fn(f64) -> f64) -> Result<(Vec<Word>, Option<String>)> {
     const LAST_WORD_S: f64 = 0.6;
     let parsed: WhisperJson = serde_json::from_str(json).context("unexpected whisper JSON")?;
     let mut words: Vec<Word> = Vec::new();
     for seg in parsed.transcription {
-        let time =
-            |t: &WhisperToken| if t.t_dtw >= 0 { t.t_dtw as f64 / 100.0 } else { t.offsets.from as f64 / 1000.0 };
+        let time = |t: &WhisperToken| {
+            if t.t_dtw >= 0 { (t.t_dtw as f64 / 100.0 - DTW_LAG_S).max(0.0) } else { t.offsets.from as f64 / 1000.0 }
+        };
         let tokens: Vec<&WhisperToken> =
             seg.tokens.iter().filter(|t| !(t.text.starts_with("[_") && t.text.ends_with(']'))).collect();
         let starts: Vec<f64> = tokens
@@ -307,7 +312,7 @@ pub fn parse_whisper_json(json: &str, to_source: &dyn Fn(f64) -> f64) -> Result<
 fn cache_path(input: &Path, model_file: &str) -> Option<PathBuf> {
     use std::hash::{Hash, Hasher};
     /// Bump when word timing changes, so old transcripts are redone.
-    const TIMING_VERSION: u32 = 3; // 3: speech-only chunks + DTW word times
+    const TIMING_VERSION: u32 = 4; // 3: speech-only chunks + DTW word times; 4: DTW lag corrected
     let meta = std::fs::metadata(input).ok()?;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     // ponytail: SipHash key is only stable per toolchain; a toolchain change just means a cache miss.
@@ -408,9 +413,10 @@ mod tests {
         let texts: Vec<_> = words.iter().map(|w| w.text.as_str()).collect();
         assert_eq!(texts, ["भाई", "आज-", "ठीक"]);
         let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
-        assert!(close(words[0].start, 10.08) && close(words[0].end, 10.46), "{words:?}");
-        assert!(close(words[1].end, 11.20), "punctuation extends the previous word: {words:?}");
-        assert!(close(words[2].start, 11.20) && close(words[2].end, 11.90), "last word: last token + 0.6 s");
+        // DTW times less the 0.2 s lag (clamped at the chunk start).
+        assert!(close(words[0].start, 10.0) && close(words[0].end, 10.26), "{words:?}");
+        assert!(close(words[1].end, 11.00), "punctuation extends the previous word: {words:?}");
+        assert!(close(words[2].start, 11.00) && close(words[2].end, 11.70), "last word: last token + 0.6 s");
     }
 
     #[test]

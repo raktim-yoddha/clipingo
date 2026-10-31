@@ -17,6 +17,6 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "process"
 # Shipped binaries: no debug symbols, cross-crate inlining.
 [profile.release]
 strip = true
-lto = "thin"
-codegen-units = 4
+lto = "fat"
+codegen-units = 1
 

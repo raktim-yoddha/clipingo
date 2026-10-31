@@ -122,10 +122,12 @@ fn ass_escape(s: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Position {
+    /// Off the faces, shot by shot: on the seam of stacked panels, under a band, else the lower third.
+    #[default]
+    Auto,
     Top,
     Middle,
     /// Lower third (above the platforms' bottom UI on 9:16).
-    #[default]
     Bottom,
 }
 
@@ -142,8 +144,35 @@ impl Default for Placement {
     }
 }
 
+/// How long the title stays up: a hook, not a label over the whole clip.
+const HOOK_S: f64 = 4.0;
+
+/// The nearest system font to a preset's Windows font. Windows has them all.
+// ponytail: stand-ins; bundling the OFL fonts would give every system the same look.
+fn system_font(name: &str) -> &str {
+    if cfg!(target_os = "macos") {
+        match name {
+            "Segoe UI Black" => "Arial Black",
+            "Segoe UI Semibold" => "Helvetica Neue",
+            "Nirmala UI" => "Kohinoor Devanagari",
+            other => other,
+        }
+    } else if cfg!(windows) {
+        name
+    } else {
+        match name {
+            "Segoe UI Black" | "Arial Black" | "Impact" => "DejaVu Sans",
+            "Segoe UI Semibold" => "DejaVu Sans",
+            "Georgia" => "DejaVu Serif",
+            "Nirmala UI" => "Noto Sans Devanagari",
+            other => other,
+        }
+    }
+}
+
 /// Word-by-word captions in `style` (see `PRESETS`), plus an optional title `(text, clip length)` at the top.
-/// Pass no words for a title-only overlay.
+/// Pass no words for a title-only overlay. `anchors`: with `Position::Auto`, the centre height of the captions for
+/// the stretches `(start, end, y)` of the clip.
 pub fn ass(
     words: &[Word],
     width: u32,
@@ -151,18 +180,19 @@ pub fn ass(
     style: &Preset,
     place: Placement,
     title: Option<(&str, f64)>,
+    anchors: &[(f64, f64, u32)],
 ) -> String {
     let vertical = height > width;
     let devanagari = words.iter().any(|w| is_devanagari(&w.text));
-    let font = if devanagari { "Nirmala UI" } else { style.font };
+    let font = system_font(if devanagari { "Nirmala UI" } else { style.font });
     let italic = if style.italic && !devanagari { -1 } else { 0 };
     let base_size = if vertical { style.size } else { style.size * 3 / 4 };
     let size = (base_size as f64 * place.scale.clamp(0.6, 1.6)).round() as u32;
     let per_page = if vertical { style.words_per_page } else { (style.words_per_page * 2).min(6) };
     // ASS numpad alignment: 2 bottom centre, 5 middle, 8 top (below the title on 9:16).
     let (alignment, margin_v) = match (place.position, vertical) {
-        (Position::Bottom, true) => (2, 560),
-        (Position::Bottom, false) => (2, 70),
+        (Position::Bottom | Position::Auto, true) => (2, 560),
+        (Position::Bottom | Position::Auto, false) => (2, 70),
         (Position::Middle, _) => (5, 0),
         (Position::Top, true) => (8, 330),
         (Position::Top, false) => (8, 130),
@@ -174,28 +204,44 @@ pub fn ass(
         Look::Boxed(c) | Look::Sweep(Some(c)) => (3, ass_color(c), 14),
         _ => (1, black.to_string(), style.outline),
     };
-    let title_font = if title.is_some_and(|(t, _)| is_devanagari(t)) { "Nirmala UI" } else { "Segoe UI Black" };
-    let (title_size, title_margin) = if vertical { (58, 150) } else { (46, 40) };
+    let title_font =
+        system_font(if title.is_some_and(|(t, _)| is_devanagari(t)) { "Nirmala UI" } else { "Segoe UI Black" });
+    // Below the status bar and app header of a phone.
+    let (title_size, title_margin) = if vertical { (58, 230) } else { (46, 40) };
     let mut out = format!(
         "[Script Info]\nScriptType: v4.00+\nPlayResX: {width}\nPlayResY: {height}\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n\
          [V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n\
-         Style: Main,{font},{size},{primary},{secondary},{outline_colour},&H80000000,-1,{italic},0,0,100,100,0,0,{border_style},{outline},2,{alignment},70,70,{margin_v},1\n\
+         Style: Main,{font},{size},{primary},{secondary},{outline_colour},&H80000000,-1,{italic},0,0,100,100,0,0,{border_style},{outline},2,{alignment},86,86,{margin_v},1\n\
          Style: Title,{title_font},{title_size},&H00FFFFFF,&H00FFFFFF,&H40000000,&H00000000,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{title_margin},1\n\n\
          [Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     );
     if let Some((text, len)) = title {
-        out.push_str(&format!("Dialogue: 2,{},{},Title,,0,0,0,,{}\n", ass_time(0.0), ass_time(len), ass_escape(text)));
+        let (until, fade) = (len.min(HOOK_S), "{\\fad(120,300)}");
+        out.push_str(&format!(
+            "Dialogue: 2,{},{},Title,,0,0,0,,{fade}{}\n",
+            ass_time(0.0),
+            ass_time(until),
+            ass_escape(text)
+        ));
     }
     let shown = |w: &Word| ass_escape(&if style.upper { w.text.to_uppercase() } else { w.text.clone() });
     let event = |layer: u8, start: f64, end: f64, text: &str| {
         format!("Dialogue: {layer},{},{},Main,,0,0,0,,{text}\n", ass_time(start), ass_time(end.max(start + 0.05)))
     };
 
+    // Strong words carry the highlight colour on plain looks; the spoken word grows a little.
+    let keywords = matches!(style.look, Look::Plain) && style.pop;
     let all_pages = pages(words, per_page);
     for (p, page) in all_pages.iter().enumerate() {
         let next_page_start = all_pages.get(p + 1).map(|n| n[0].start);
         let linger = |last: &Word| next_page_start.map_or(last.end + MAX_LINGER_S, |n| n.min(last.end + MAX_LINGER_S));
-        let pop = if style.pop { format!("{{{POP_IN}}}") } else { String::new() };
+        // Auto: the shot the page starts in decides, and the whole page stays there.
+        let at = anchors.iter().find(|a| page[0].start >= a.0 && page[0].start < a.1).map(|a| a.2);
+        let anchor = match (place.position, at) {
+            (Position::Auto, Some(y)) => format!("{{\\an5\\pos({},{y})}}", width / 2),
+            _ => String::new(),
+        };
+        let pop = if style.pop { format!("{anchor}{{{POP_IN}}}") } else { anchor.clone() };
 
         if let Look::Sweep(_) = style.look {
             // One event per page; each word's \kf runs until the next word starts.
@@ -207,34 +253,54 @@ pub fn ass(
                     format!("{{\\kf{}}}{}", ((until - w.start) * 100.0).round().max(1.0) as u64, shown(w))
                 })
                 .collect();
-            out.push_str(&event(0, page[0].start, linger(&page[page.len() - 1]), &text.join(" ")));
+            let text = format!("{anchor}{}", text.join(" "));
+            out.push_str(&event(0, page[0].start, linger(&page[page.len() - 1]), &text));
             continue;
         }
 
         for (i, w) in page.iter().enumerate() {
             let end = page.get(i + 1).map_or_else(|| linger(w), |next| next.start);
-            let entrance = if i == 0 { pop.as_str() } else { "" };
-            let line = |active: &dyn Fn(&str) -> String, other: &dyn Fn(&str) -> String| {
+            let entrance = if i == 0 { pop.as_str() } else { anchor.as_str() };
+            // The first word arrives with the page's own pop-in.
+            let grow = if style.pop && i > 0 { "\\t(0,80,\\fscx112\\fscy112)" } else { "" };
+            let shrink = if grow.is_empty() { "" } else { "\\fscx100\\fscy100" };
+            let line = |active: &dyn Fn(&str) -> String, other: &dyn Fn(&Word, &str) -> String| {
                 let words: Vec<String> = page
                     .iter()
                     .enumerate()
-                    .map(|(j, x)| if j == i { active(&shown(x)) } else { other(&shown(x)) })
+                    .map(|(j, x)| if j == i { active(&shown(x)) } else { other(x, &shown(x)) })
                     .collect();
                 format!("{entrance}{}", words.join(" "))
             };
             // Explicit resets instead of \r, so the page's pop-in keeps scaling the other words.
             let main = match style.look {
                 Look::Pill(c) => line(
-                    &|t| format!("{{\\c{hl}\\3c{}\\bord16}}{t}{{\\c{base}\\3c{black}\\bord{outline}}}", ass_color(c)),
-                    &|t| t.to_string(),
+                    &|t| {
+                        format!(
+                            "{{\\c{hl}\\3c{}\\bord16{grow}}}{t}{{\\c{base}\\3c{black}\\bord{outline}{shrink}}}",
+                            ass_color(c)
+                        )
+                    },
+                    &|_, t| t.to_string(),
                 ),
-                _ => line(&|t| format!("{{\\c{hl}}}{t}{{\\c{base}}}"), &|t| t.to_string()),
+                _ => line(&|t| format!("{{\\c{hl}{grow}}}{t}{{\\c{base}{shrink}}}"), &|w, t| {
+                    if keywords && crate::emphasis::is_strong(&w.text) {
+                        format!("{{\\c{hl}}}{t}{{\\c{base}}}")
+                    } else {
+                        t.to_string()
+                    }
+                }),
             };
             if let Look::Glow(c) = style.look {
                 // Same text one layer down: only the active word's blurred outline shows.
                 let glow = line(
-                    &|t| format!("{{\\1a&HFF&\\3a&H30&\\3c{}\\bord14\\blur12}}{t}{{\\alpha&HFF&}}", ass_color(c)),
-                    &|t| format!("{{\\alpha&HFF&}}{t}"),
+                    &|t| {
+                        format!(
+                            "{{\\1a&HFF&\\3a&H30&\\3c{}\\bord14\\blur12{grow}}}{t}{{\\alpha&HFF&{shrink}}}",
+                            ass_color(c)
+                        )
+                    },
+                    &|_, t| format!("{{\\alpha&HFF&}}{t}"),
                 );
                 out.push_str(&event(0, w.start, end, &glow));
             }
@@ -293,9 +359,11 @@ pub fn srt(words: &[Word]) -> String {
         }
     }
     flush(&mut cur, &mut cues);
+    let clip_end = words.iter().map(|w| w.end).fold(0.0, f64::max);
     let mut out = String::new();
     for (i, (s, e, text)) in cues.iter().enumerate() {
-        let next = cues.get(i + 1).map_or(f64::INFINITY, |c| c.0);
+        // The last cue lingers no further than the last word: the clip ends there.
+        let next = cues.get(i + 1).map_or(clip_end, |c| c.0);
         let end = (e + SRT_LINGER_S).min(next);
         out.push_str(&format!("{}\n{} --> {}\n{}\n\n", i + 1, srt_time(*s), srt_time(end), wrap(text)));
     }
@@ -326,7 +394,7 @@ mod tests {
     #[test]
     fn ass_highlights_each_word_and_escapes_markup() {
         let words = [w("hello", 0.0, 0.4), w("{evil}", 0.5, 0.9)];
-        let a = ass(&words, 1080, 1920, preset("pop"), Placement::default(), None);
+        let a = ass(&words, 1080, 1920, preset("pop"), Placement::default(), None, &[]);
         assert!(a.contains("PlayResY: 1920") && a.contains("Segoe UI Black"));
         let ev = events(&a);
         assert_eq!(ev.len(), 2);
@@ -341,35 +409,42 @@ mod tests {
         assert_eq!(PRESETS.len(), 13);
         assert_eq!(preset("nope").id, "pop");
 
-        let sweep = ass(&words, 1080, 1920, preset("sweep"), Placement::default(), None);
+        let sweep = ass(&words, 1080, 1920, preset("sweep"), Placement::default(), None, &[]);
         let ev = events(&sweep);
         assert_eq!(ev.len(), 1, "one karaoke event per page");
         assert!(ev[0].contains("{\\kf50}one {\\kf40}two"), "{}", ev[0]);
 
-        let glow = ass(&words, 1080, 1920, preset("glow"), Placement::default(), None);
+        let glow = ass(&words, 1080, 1920, preset("glow"), Placement::default(), None, &[]);
         assert_eq!(events(&glow).len(), 4, "bloom layer under each word event");
         assert!(glow.contains("\\blur12") && glow.contains("&H00FFC800&"), "cyan #00C8FF bloom");
 
-        let punch = ass(&words, 1080, 1920, preset("punch"), Placement::default(), None);
+        let punch = ass(&words, 1080, 1920, preset("punch"), Placement::default(), None, &[]);
         assert!(punch.contains("ONE") && events(&punch).len() == 2, "one upper-case word per page");
 
-        let paper = ass(&words, 1080, 1920, preset("paper"), Placement::default(), None);
+        let paper = ass(&words, 1080, 1920, preset("paper"), Placement::default(), None, &[]);
         assert!(paper.contains(",3,14,") && paper.contains("&H00FFFFFF&,&H80000000"), "white card box");
     }
 
     #[test]
-    fn title_sits_on_top_for_the_whole_clip() {
-        let a = ass(&[], 1080, 1920, preset("pop"), Placement::default(), Some(("Why {this} works", 31.5)));
+    fn title_is_a_hook_at_the_top_that_fades() {
+        let a = ass(&[], 1080, 1920, preset("pop"), Placement::default(), Some(("Why {this} works", 31.5)), &[]);
         let ev = events(&a);
         assert_eq!(ev.len(), 1);
-        assert!(ev[0].starts_with("Dialogue: 2,0:00:00.00,0:00:31.50,Title,") && ev[0].ends_with("Why (this) works"));
+        assert!(
+            ev[0].starts_with("Dialogue: 2,0:00:00.00,0:00:04.00,Title,") && ev[0].ends_with("Why (this) works"),
+            "{}",
+            ev[0]
+        );
+        assert!(ev[0].contains("\\fad(120,300)"), "{}", ev[0]);
+        let short = ass(&[], 1080, 1920, preset("pop"), Placement::default(), Some(("Hi", 2.5)), &[]);
+        assert!(events(&short)[0].contains(",0:00:02.50,Title,"), "never past the clip");
     }
 
     #[test]
     fn devanagari_switches_font() {
         assert!(
-            ass(&[w("क्या", 0.0, 0.5)], 1080, 1920, preset("editorial"), Placement::default(), None)
-                .contains("Main,Nirmala UI")
+            ass(&[w("क्या", 0.0, 0.5)], 1080, 1920, preset("editorial"), Placement::default(), None, &[])
+                .contains(&format!("Main,{}", system_font("Nirmala UI")))
         );
     }
 
@@ -386,11 +461,30 @@ mod tests {
     #[test]
     fn placement_moves_and_scales_the_main_style() {
         let words = [w("hi", 0.0, 0.5)];
-        let main = |place| ass(&words, 1080, 1920, preset("pop"), place, None);
-        assert!(main(Placement::default()).contains("Style: Main,Segoe UI Black,82,"));
+        let main = |place| ass(&words, 1080, 1920, preset("pop"), place, None, &[]);
+        let font = system_font("Segoe UI Black");
+        assert!(main(Placement::default()).contains(&format!("Style: Main,{font},82,")));
         let top = main(Placement { position: Position::Top, scale: 1.5 });
-        assert!(top.contains("Style: Main,Segoe UI Black,123,") && top.contains(",2,8,70,70,330,1"), "{top}");
+        assert!(top.contains(&format!("Style: Main,{font},123,")) && top.contains(",2,8,86,86,330,1"), "{top}");
         let mid = main(Placement { position: Position::Middle, scale: 9.0 });
-        assert!(mid.contains(",131,") && mid.contains(",2,5,70,70,0,1"), "size clamped to 1.6×: {mid}");
+        assert!(mid.contains(",131,") && mid.contains(",2,5,86,86,0,1"), "size clamped to 1.6×: {mid}");
+    }
+
+    #[test]
+    fn auto_places_each_page_for_its_shot_and_the_spoken_word_pops() {
+        let words: Vec<Word> = ["why", "nobody", "told", "me", "this", "secret"]
+            .iter()
+            .enumerate()
+            .map(|(i, t)| w(t, i as f64 * 0.5, i as f64 * 0.5 + 0.4))
+            .collect();
+        let place = Placement { position: Position::Auto, scale: 1.0 };
+        let a = ass(&words, 1080, 1920, preset("pop"), place, None, &[(0.0, 1.4, 960), (1.4, 9.0, 1380)]);
+        let ev = events(&a);
+        assert!(ev[0].contains("\\an5\\pos(540,960)"), "stacked shot: on the seam: {}", ev[0]);
+        assert!(ev[3].contains("\\an5\\pos(540,1380)"), "next page, next shot: {}", ev[3]);
+        assert!(ev[1].contains("\\t(0,80,\\fscx112\\fscy112)"), "the spoken word grows: {}", ev[1]);
+        assert!(ev[3].contains("{\\c&H0034E2FF&}"), "a strong word keeps the highlight colour: {}", ev[3]);
+        let manual = ass(&words, 1080, 1920, preset("pop"), Placement::default(), None, &[(0.0, 9.0, 960)]);
+        assert!(!manual.contains("\\pos("), "a position you picked stays");
     }
 }

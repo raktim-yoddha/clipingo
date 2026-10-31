@@ -179,6 +179,32 @@ async fn dispatch(method: &str, params: Value, id: &Value, out: &UnboundedSender
             let p: P = serde_json::from_value(params).map_err(invalid_params)?;
             Ok(json!(pipeline::retext(&p.id, p.start, p.end, &p.text)?))
         }
+        "run.framing" => {
+            /// How a clip is framed in 9:16 on the editor's clock: shots, layouts and crops (source pixels).
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+                rank: usize,
+                #[serde(default)]
+                options: render::RenderOptions,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(render::preview_plan(&p.id, p.rank, &p.options, &notifier(out, id)).await?))
+        }
+        "run.set_layout" => {
+            /// Your layout for the shot `shot` (source seconds) around source time `at`; no layout: back to the rules.
+            #[derive(Deserialize)]
+            struct P {
+                id: String,
+                rank: usize,
+                at: f64,
+                shot: (f64, f64),
+                #[serde(default)]
+                layout: Option<clipingo_core::framing::Layout>,
+            }
+            let p: P = serde_json::from_value(params).map_err(invalid_params)?;
+            Ok(json!(pipeline::set_layout(&p.id, p.rank, p.at, p.shot, p.layout)?))
+        }
         "run.thumbs" => {
             #[derive(Deserialize)]
             struct P {

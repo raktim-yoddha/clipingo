@@ -9,10 +9,11 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::Word;
-use crate::framing::{Face, Framing, Layout};
+use crate::framing::{Face, Framing, Layout, Motion, Request, Shot};
 use crate::models::{Progress, ProgressFn};
 use crate::pacing::{self, WindowWord};
 use crate::pipeline::{self, Run};
+use crate::scorer::Candidate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,6 +56,10 @@ pub struct RenderOptions {
     pub caption_size: f64,
     /// Short fade in from and out to black (video and sound).
     pub fade: bool,
+    /// 9:16: push in on the strong lines.
+    pub smart_zoom: bool,
+    /// 9:16: stacked panels the other way up (the action above the face, the right person on top).
+    pub swap_stack: bool,
 }
 
 impl Default for RenderOptions {
@@ -68,9 +73,11 @@ impl Default for RenderOptions {
             speed: 1.0,
             framing: Framing::default(),
             vision_check: false,
-            caption_position: crate::captions::Position::Bottom,
+            caption_position: crate::captions::Position::Auto,
             caption_size: 1.0,
             fade: false,
+            smart_zoom: true,
+            swap_stack: false,
         }
     }
 }
@@ -139,7 +146,7 @@ fn encoder_args(encoder: &str) -> Vec<&'static str> {
 }
 
 /// A kept part of the source: (piece index, start, end) in source seconds. Pieces are the clip's segments.
-type Keep = (usize, f64, f64);
+pub type Keep = (usize, f64, f64);
 
 /// `plan_cuts` over each piece in turn: the kept parts in output order, and the words on the output timeline.
 fn plan_pieces(words: &[Word], pieces: &[(f64, f64)], cut_dead_air: bool) -> (Vec<Keep>, Vec<Word>) {
@@ -165,10 +172,22 @@ fn to_clip_time(keeps: &[Keep], piece: usize, t: f64) -> Option<f64> {
     None
 }
 
-/// `[vcat] → [vf]`: 9:16 in `layout`, or 16:9 letterboxed.
-fn framing_chain(format: Format, layout: Layout, faces: &[Face], duration: f64, src: (u32, u32)) -> String {
+/// Clip time of the first kept moment of `piece` after source time `t` (a moment that was cut out).
+fn next_kept(keeps: &[Keep], piece: usize, t: f64) -> Option<f64> {
+    let mut offset = 0.0;
+    for &(i, a, b) in keeps {
+        if i == piece && a >= t {
+            return Some(offset);
+        }
+        offset += b - a;
+    }
+    None
+}
+
+/// `[vcat] → [vf]`: 9:16 framed by `shots`, or 16:9 letterboxed.
+fn framing_chain(format: Format, shots: &[Shot]) -> String {
     match format {
-        Format::Vertical => crate::framing::vertical_chain(layout, faces, duration, src, ("vcat", "vf")),
+        Format::Vertical => crate::framing::vertical_chain(shots, ("vcat", "vf")),
         Format::Horizontal => {
             let (w, h) = format.size();
             format!(
@@ -230,7 +249,10 @@ fn filter_graph(
         _ => (String::new(), String::new()),
     };
     g.push_str(&format!("[vo]null{vfade}[vout];"));
-    g.push_str(&format!("[ac]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000{afade}[aout]"));
+    // loudnorm alone overshoots on short clips (`clip eval` measured peaks above 0 dBFS): a limiter holds them.
+    g.push_str(&format!(
+        "[ac]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,alimiter=limit=0.82:level=false{afade}[aout]"
+    ));
     g
 }
 
@@ -332,6 +354,153 @@ async fn run_ffmpeg(args: &[String], cwd: &Path, duration: f64, stage: &str, pro
     Ok(())
 }
 
+/// What framing works from, on a clip's timeline.
+#[derive(Debug, Clone, Default)]
+pub struct Analysis {
+    pub faces: Vec<Face>,
+    pub motion: Vec<Motion>,
+    pub cuts: Vec<f64>,
+}
+
+/// Bump when detection changes, so old scans are redone.
+const SCAN_VERSION: u32 = 1;
+
+/// Faces, motion and cuts of a stretch of the source, in source seconds. Saved with the run: a shot's tracking stays
+/// fixed once found, so opening a clip or exporting it again never scans again.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct Scanned {
+    faces: Vec<Face>,
+    motion: Vec<Motion>,
+    cuts: Vec<f64>,
+}
+
+/// `v1_12000_45500.json` → (12.0, 45.5), for this `SCAN_VERSION`.
+fn scan_range(file: &str) -> Option<(f64, f64)> {
+    let mut parts = file.strip_suffix(".json")?.split('_');
+    (parts.next()? == format!("v{SCAN_VERSION}")).then_some(())?;
+    Some((parts.next()?.parse::<f64>().ok()? / 1000.0, parts.next()?.parse::<f64>().ok()? / 1000.0))
+}
+
+/// The saved scan holding `start..end`, cut down to it. A trim inside a scanned part finds it here.
+fn saved_scan(dir: &Path, start: f64, end: f64) -> Option<Scanned> {
+    let file = std::fs::read_dir(dir).ok()?.flatten().find(|f| {
+        scan_range(&f.file_name().to_string_lossy()).is_some_and(|(a, b)| a <= start + 0.01 && b >= end - 0.01)
+    })?;
+    let mut s: Scanned = serde_json::from_slice(&std::fs::read(file.path()).ok()?).ok()?;
+    s.faces.retain(|f| (start..end).contains(&f.t));
+    s.motion.retain(|m| (start..end).contains(&m.t));
+    s.cuts.retain(|t| (start..end).contains(t));
+    Some(s)
+}
+
+/// Faces, motion and camera cuts on the timeline of `keeps` (the kept parts of `pieces`, in order): what falls in
+/// cut-out moments is dropped, and each join of two pieces is a cut.
+pub async fn analyse(run: &Run, pieces: &[(f64, f64)], keeps: &[Keep], progress: ProgressFn<'_>) -> Result<Analysis> {
+    let src = (run.media_info.width.unwrap_or(1920) as u32, run.media_info.height.unwrap_or(1080) as u32);
+    let dir = Path::new(&run.dir).join("scans");
+    let mut out = Analysis::default();
+    for (i, &(start, end)) in pieces.iter().enumerate() {
+        let found = match saved_scan(&dir, start, end) {
+            Some(s) => s,
+            None => {
+                let model = crate::framing::model(progress).await?;
+                let path = std::path::PathBuf::from(&run.media);
+                let found = tokio::task::spawn_blocking(move || {
+                    let scan = crate::framing::scan(&model, &path, start, end, src)?;
+                    let cuts = crate::framing::scene_cuts(&path, start, end);
+                    anyhow::Ok(Scanned { faces: scan.faces, motion: scan.motion, cuts })
+                })
+                .await
+                .context("face detection stopped")??;
+                std::fs::create_dir_all(&dir)?;
+                let name = format!("v{SCAN_VERSION}_{}_{}.json", (start * 1000.0).floor(), (end * 1000.0).ceil());
+                std::fs::write(dir.join(name), serde_json::to_vec(&found)?)?;
+                found
+            }
+        };
+        out.faces.extend(found.faces.into_iter().filter_map(|f| Some(Face { t: to_clip_time(keeps, i, f.t)?, ..f })));
+        out.motion
+            .extend(found.motion.into_iter().filter_map(|m| Some(Motion { t: to_clip_time(keeps, i, m.t)?, ..m })));
+        // A cut inside a removed pause still changes the picture: at the next kept frame.
+        out.cuts.extend(
+            found.cuts.into_iter().filter_map(|t| to_clip_time(keeps, i, t).or_else(|| next_kept(keeps, i, t))),
+        );
+        if i > 0
+            && let Some(&(_, a, _)) = keeps.iter().find(|k| k.0 == i)
+        {
+            out.cuts.extend(to_clip_time(keeps, i, a));
+        }
+    }
+    out.cuts.sort_by(f64::total_cmp);
+    Ok(out)
+}
+
+/// The clip's chosen shot layouts on the timeline of `keeps`.
+fn shot_choices(c: &Candidate, keeps: &[Keep]) -> Vec<(f64, Layout)> {
+    let pieces = c.pieces();
+    c.layouts
+        .iter()
+        .filter_map(|&(t, l)| {
+            let i = pieces.iter().position(|p| (p.0..p.1).contains(&t))?;
+            Some((to_clip_time(keeps, i, t).or_else(|| next_kept(keeps, i, t))?, l))
+        })
+        .collect()
+}
+
+/// AI vision's layout for a frame from the middle of the clip's first part.
+async fn vision_check(media: &str, dir: &Path, rank: usize, pieces: &[(f64, f64)]) -> Option<Layout> {
+    let frame = dir.join(format!("clip_{rank:02}.vision.jpg"));
+    let mid = format!("{:.3}", (pieces[0].0 + pieces[0].1) / 2.0);
+    let grabbed = Command::new(crate::tools::resolve("ffmpeg"))
+        .args(["-hide_banner", "-v", "error", "-y", "-ss", &mid, "-i", media, "-frames:v", "1"])
+        .args(["-vf", "scale=960:-2"])
+        .arg(&frame)
+        .status()
+        .await
+        .is_ok_and(|s| s.success());
+    let seen = if grabbed { crate::framing::vision_layout(&frame).await } else { None };
+    std::fs::remove_file(&frame).ok();
+    seen
+}
+
+/// How a clip would be framed in 9:16, on the editor's clock (its parts back to back, no dead-air cuts): the
+/// editor draws the crop boxes on the source and previews the vertical frame from it. Uncut parts are what the
+/// editor plays, so its boxes line up with what it shows; the export plans again on the cut timeline.
+pub async fn preview_plan(
+    run_id: &str,
+    rank: usize,
+    opts: &RenderOptions,
+    progress: ProgressFn<'_>,
+) -> Result<Vec<Shot>> {
+    let (run, words) = pipeline::load_run(run_id)?;
+    let c = run.candidates.iter().find(|c| c.rank == rank).with_context(|| format!("no clip #{rank} in this run"))?;
+    let pieces = c.pieces();
+    let keeps: Vec<Keep> = pieces.iter().enumerate().map(|(i, &(a, b))| (i, a, b)).collect();
+    let length = pieces.iter().map(|(a, b)| b - a).sum::<f64>();
+    let src = (run.media_info.width.unwrap_or(1920) as u32, run.media_info.height.unwrap_or(1080) as u32);
+    let scan = analyse(&run, &pieces, &keeps, progress).await?;
+    let (_, clip_words) = plan_pieces(&words, &pieces, false);
+    let overrides = shot_choices(c, &keeps);
+    Ok(crate::framing::plan(&Request {
+        framing: opts.framing,
+        faces: &scan.faces,
+        motion: &scan.motion,
+        cuts: &scan.cuts,
+        words: &clip_words,
+        duration: length,
+        src,
+        force: None,
+        overrides: &overrides,
+        swap: opts.swap_stack,
+        smart_zoom: opts.smart_zoom,
+    }))
+}
+
+/// Where a render keeps its plan, in the run's folder.
+pub fn plan_file(run: &Run, stem: &str) -> std::path::PathBuf {
+    Path::new(&run.dir).join("plans").join(format!("{stem}.json"))
+}
+
 /// Options of the run's last export (defaults before the first).
 pub fn last_options(run: &Run) -> RenderOptions {
     std::fs::read(Path::new(&run.dir).join("render.json"))
@@ -367,11 +536,51 @@ pub async fn render_clips(
         let pieces = c.pieces();
         let (keeps, mut clip_words) = plan_pieces(&words, &pieces, opts.cut_dead_air);
         let flat: Vec<(f64, f64)> = keeps.iter().map(|&(_, a, b)| (a, b)).collect();
-        for w in &mut clip_words {
-            (w.start, w.end) = (w.start / speed, w.end / speed);
-        }
         let duration = flat.iter().map(|(a, b)| b - a).sum::<f64>() / speed;
+        let unsped_words = clip_words.clone();
+        let src = (run.media_info.width.unwrap_or(1920) as u32, run.media_info.height.unwrap_or(1080) as u32);
+        let shots = if opts.format == Format::Vertical {
+            progress(Progress { stage: format!("Framing clip #{rank}"), done: 0, total: None });
+            let scan = if opts.framing != Framing::Classic || !c.layouts.is_empty() {
+                analyse(&run, &pieces, &keeps, progress).await?
+            } else {
+                Analysis::default()
+            };
+            let mut force = None;
+            if opts.vision_check && crate::framing::unsure(opts.framing, &scan.faces, duration * speed) {
+                progress(Progress { stage: format!("Checking clip #{rank} with AI vision"), done: 0, total: None });
+                force = vision_check(&run.media, &out_dir, rank, &pieces).await;
+            }
+            let overrides = shot_choices(c, &keeps);
+            crate::framing::plan(&Request {
+                framing: opts.framing,
+                faces: &scan.faces,
+                motion: &scan.motion,
+                cuts: &scan.cuts,
+                words: &unsped_words,
+                duration: duration * speed,
+                src,
+                force,
+                overrides: &overrides,
+                swap: opts.swap_stack,
+                smart_zoom: opts.smart_zoom,
+            })
+        } else {
+            Vec::new()
+        };
+        for w in &mut clip_words {
+            // The last word's estimated end can run past the clip (`clip eval` caught SRT cues after the end).
+            (w.start, w.end) = (w.start / speed, (w.end / speed).min(duration));
+        }
         let stem = format!("clip_{rank:02}_{}", if opts.format == Format::Vertical { "9x16" } else { "16x9" });
+
+        // For `clip eval`: the framing and how many words the captions should hold.
+        let saved = serde_json::json!({
+            "speed": speed, "duration": duration, "words": clip_words.len(), "src": src, "shots": shots
+        });
+        let plan_path = plan_file(&run, &stem);
+        std::fs::create_dir_all(plan_path.parent().expect("has a folder"))?;
+        std::fs::write(&plan_path, serde_json::to_vec(&saved)?)?;
 
         let srt_path = out_dir.join(format!("{stem}.srt"));
         std::fs::write(&srt_path, crate::captions::srt(&clip_words))?;
@@ -382,45 +591,15 @@ pub async fn render_clips(
             let title = opts.title.then_some((c.title.as_str(), duration));
             let style = crate::captions::preset(&opts.caption_style);
             let place = crate::captions::Placement { position: opts.caption_position, scale: opts.caption_size };
-            std::fs::write(out_dir.join(&ass_name), crate::captions::ass(shown, w, h, style, place, title))?;
+            let anchors: Vec<(f64, f64, u32)> =
+                shots.iter().map(|s| (s.start / speed, s.end / speed, s.caption_y)).collect();
+            std::fs::write(out_dir.join(&ass_name), crate::captions::ass(shown, w, h, style, place, title, &anchors))?;
         }
         // ponytail: the Premiere timeline stays at 1× (no time remap yet); speed is in the MP4 only.
         let xml_path = out_dir.join(format!("{stem}.xml"));
         std::fs::write(&xml_path, premiere_xml(&run, &c.title, &flat, opts.format))?;
 
-        let src = (run.media_info.width.unwrap_or(1920) as u32, run.media_info.height.unwrap_or(1080) as u32);
-        let mut faces: Vec<Face> = Vec::new();
-        if opts.format == Format::Vertical && opts.framing != Framing::Classic {
-            let model = crate::framing::model(progress).await?;
-            progress(Progress { stage: format!("Finding the speaker in clip #{rank}"), done: 0, total: None });
-            for (i, &(start, end)) in pieces.iter().enumerate() {
-                let (model, media) = (model.clone(), std::path::PathBuf::from(&run.media));
-                let found =
-                    tokio::task::spawn_blocking(move || crate::framing::detect(&model, &media, start, end, src))
-                        .await
-                        .context("face detection stopped")??;
-                // Onto the cut clip's timeline; faces in cut-out moments are dropped.
-                faces.extend(found.into_iter().filter_map(|f| Some(Face { t: to_clip_time(&keeps, i, f.t)?, ..f })));
-            }
-        }
-        let (mut layout, unsure) = crate::framing::choose(opts.framing, &faces, duration * speed);
-        if opts.format == Format::Vertical && opts.framing == Framing::Smart && opts.vision_check && unsure {
-            progress(Progress { stage: format!("Checking clip #{rank} with AI vision"), done: 0, total: None });
-            let frame = out_dir.join(format!("{stem}.vision.jpg"));
-            let mid = format!("{:.3}", (pieces[0].0 + pieces[0].1) / 2.0);
-            let grabbed = Command::new(crate::tools::resolve("ffmpeg"))
-                .args(["-hide_banner", "-v", "error", "-y", "-ss", &mid, "-i", &run.media, "-frames:v", "1"])
-                .args(["-vf", "scale=960:-2"])
-                .arg(&frame)
-                .status()
-                .await
-                .is_ok_and(|s| s.success());
-            if grabbed && let Some(seen) = crate::framing::vision_layout(&frame).await {
-                layout = seen;
-            }
-            std::fs::remove_file(&frame).ok();
-        }
-        let frame_chain = framing_chain(opts.format, layout, &faces, duration * speed, src);
+        let frame_chain = framing_chain(opts.format, &shots);
 
         // One input per piece, seeked (fast) to its start; the graph trims relative to it.
         let seeks: Vec<f64> = pieces.iter().map(|p| p.0).collect();
@@ -506,13 +685,13 @@ mod tests {
 
     #[test]
     fn graph_has_one_trim_pair_per_piece_and_escaped_fonts() {
-        let classic = framing_chain(Format::Vertical, Layout::Whole, &[], 5.0, (1920, 1080));
+        let classic = framing_chain(Format::Vertical, &[]);
         let g = filter_graph(&[(0, 10.0, 12.0), (0, 13.0, 15.5)], &[10.0], &classic, 1.0, Some("c.ass"), None);
         assert_eq!(g.matches("[0:v]trim").count(), 2);
         assert!(g.contains("trim=start=3.000:end=5.500") && g.contains("concat=n=2:v=1:a=1"));
         assert!(g.contains("[vcat]split=2") && g.contains("[vf];[vf]null[vl]"), "framing then speed: {g}");
         assert!(g.contains("shaping=complex") && g.ends_with("[aout]") && !g.contains("atempo"));
-        let wide = framing_chain(Format::Horizontal, Layout::Follow, &[], 5.0, (1920, 1080));
+        let wide = framing_chain(Format::Horizontal, &[]);
         let fast = filter_graph(&[(0, 0.0, 5.0)], &[0.0], &wide, 1.5, None, None);
         assert!(fast.contains("setpts=PTS/1.5[vl]") && fast.contains("atempo=1.5[ac]"), "{fast}");
         assert!(!fast.contains("d=0.4"), "no fades unless asked (the 12 ms de-click fades stay)");
@@ -523,6 +702,23 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_scan_answers_for_any_stretch_inside_it() {
+        assert_eq!(scan_range(&format!("v{SCAN_VERSION}_12000_45500.json")), Some((12.0, 45.5)));
+        assert_eq!(scan_range("v0_12000_45500.json"), None, "older detection");
+        let dir = crate::transcribe::Workspace::new().unwrap();
+        let scan = Scanned {
+            faces: vec![Face { t: 13.0, ..Default::default() }, Face { t: 30.0, ..Default::default() }],
+            motion: Vec::new(),
+            cuts: vec![14.0, 31.0],
+        };
+        std::fs::write(dir.0.join(format!("v{SCAN_VERSION}_12000_45500.json")), serde_json::to_vec(&scan).unwrap())
+            .unwrap();
+        let part = saved_scan(&dir.0, 12.5, 20.0).expect("inside");
+        assert_eq!((part.faces.len(), part.cuts), (1, vec![14.0]));
+        assert!(saved_scan(&dir.0, 40.0, 50.0).is_none(), "reaches outside what was scanned");
+    }
+
+    #[test]
     fn source_times_map_onto_the_cut_clip() {
         let keeps = [(0, 10.0, 12.0), (0, 15.0, 16.0), (1, 2.0, 4.0)];
         assert_eq!(to_clip_time(&keeps, 0, 11.0), Some(1.0));
@@ -530,6 +726,8 @@ mod tests {
         assert_eq!(to_clip_time(&keeps, 0, 15.5), Some(2.5));
         assert_eq!(to_clip_time(&keeps, 1, 3.0), Some(4.0), "second piece follows the first");
         assert_eq!(to_clip_time(&keeps, 0, 3.0), None, "only its own piece");
+        assert_eq!(next_kept(&keeps, 0, 13.0), Some(2.0), "a cut in a removed pause lands where the picture resumes");
+        assert_eq!(next_kept(&keeps, 1, 5.0), None);
     }
 
     #[test]

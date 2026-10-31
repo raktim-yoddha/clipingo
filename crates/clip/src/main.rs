@@ -14,8 +14,13 @@ const USAGE: &str = "usage:
   clip transcribe <file> [lang] [refresh]
   clip run <file|url> [lang] [refresh]
                                       download (links), transcribe, find clips; prints the saved run
-  clip render <run-id> <rank>... [horizontal] [keep-pauses] [no-captions] [title] [speed=1.5] [style=glow] [framing=smart|full|classic] [vision]
+  clip render <run-id> <rank>... [horizontal] [keep-pauses] [no-captions] [title] [speed=1.5] [style=glow] [framing=smart|full|classic] [vision] [no-zoom] [swap] [position=auto|top|middle|bottom]
                                       render candidates (9:16 by default) + SRT + Premiere XML
+  clip framing <run-id> <rank> [smart|full|classic] [swap] [no-zoom]
+                                      how a clip is framed in 9:16: shots, layouts, zooms and crops (editor clock)
+  clip eval <run-id> [captions.vtt|srt]
+                                      evals: transcript vs reference captions (WER, recall, sync), clip
+                                      boundaries, exports (size, face in frame, pauses, caption timing)
   clip score <words.json>             find clip candidates in a transcript ([{\"w\",\"s\",\"e\"}, …])
   clip models                         list local speech models
   clip models install <id|all>        english, hinglish, hindi, runtime (whisper.cpp), yt-dlp, deno
@@ -47,6 +52,12 @@ fn render_options(flags: &[&str]) -> Result<(Vec<usize>, RenderOptions)> {
             "no-captions" => opts.captions = false,
             "title" => opts.title = true,
             "vision" => opts.vision_check = true,
+            "no-zoom" => opts.smart_zoom = false,
+            "swap" => opts.swap_stack = true,
+            f if f.starts_with("position=") => {
+                opts.caption_position =
+                    serde_json::from_value(serde_json::json!(&f[9..])).with_context(|| format!("bad position: {f}"))?
+            }
             f if f.starts_with("speed=") => opts.speed = f[6..].parse().with_context(|| format!("bad speed: {f}"))?,
             f if f.starts_with("style=") => opts.caption_style = f[6..].to_string(),
             f if f.starts_with("framing=") => {
@@ -119,6 +130,32 @@ async fn main() -> Result<()> {
         ["render", run_id, flags @ ..] => {
             let (ranks, opts) = render_options(flags)?;
             serde_json::to_value(render::render_clips(run_id, &ranks, &opts, &progress).await?)?
+        }
+        ["framing", run_id, rank, rest @ ..] => {
+            let mut opts = RenderOptions::default();
+            for &f in rest {
+                match f {
+                    "swap" => opts.swap_stack = true,
+                    "no-zoom" => opts.smart_zoom = false,
+                    other => {
+                        opts.framing = serde_json::from_value(serde_json::json!(other))
+                            .with_context(|| format!("unknown option {other}\n{USAGE}"))?
+                    }
+                }
+            }
+            serde_json::to_value(render::preview_plan(run_id, rank.parse()?, &opts, &progress).await?)?
+        }
+        ["eval", run_id, rest @ ..] => {
+            let reference = rest.first().map(std::path::Path::new);
+            let report = clipingo_core::eval::run(run_id, reference, &progress).await?;
+            eprintln!();
+            for f in &report.failures {
+                eprintln!("FAIL {f}");
+            }
+            if report.failures.is_empty() {
+                eprintln!("all checks pass");
+            }
+            serde_json::to_value(report)?
         }
         ["models"] => serde_json::json!({ "whisper_cli": models::whisper_cli(), "models": models::status() }),
         ["models", "install", id] => install(id).await?,

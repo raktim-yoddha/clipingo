@@ -1,15 +1,16 @@
-//! Virtual camera: turns noisy face centres into a calm crop path.
+//! Virtual camera: turns noisy face centres into a calm crop path that stays on the face.
 //!
-//! Port of BridgeClip's `smooth_focus_path` / `simplify_path`: hold still inside a
-//! dead zone, pan with a capped speed, then keep the fewest keyframes that
-//! reproduce the path (they become ffmpeg crop expressions and Premiere Motion keyframes).
+//! Median filter (drops single-frame detector jumps), then a dead zone (a still head never moves the camera), then
+//! zero-phase smoothing: run forwards and backwards, so the camera does not trail the subject the way a one-way
+//! filter or a speed-capped pan does. Finally the fewest keyframes that reproduce the path (they become ffmpeg crop
+//! expressions and Premiere Motion keyframes).
 
 /// Analysis rate the path grid is built on.
 pub const ANALYSIS_FPS: f64 = 4.0;
 /// Subject may drift this share of the crop width before the camera moves.
-pub const CAMERA_DEADZONE: f64 = 0.12;
-/// Fastest pan, in crop widths per second.
-pub const CAMERA_MAX_SPEED: f64 = 0.9;
+pub const CAMERA_DEADZONE: f64 = 0.06;
+/// Time constant of the smoothing, seconds: longer is calmer, shorter sticks closer.
+pub const CAMERA_TAU_S: f64 = 0.4;
 /// FFmpeg expression budget per shot.
 pub const MAX_PATH_KEYFRAMES: usize = 40;
 
@@ -60,21 +61,30 @@ pub fn smooth_focus_path(samples: &[(i64, f64, f64)], duration_ms: i64, crop_w_f
     let fy: Vec<f64> = (0..grid.len()).map(|i| window(i, |g| g.2)).collect();
 
     let deadzone = CAMERA_DEADZONE * crop_w_frac;
-    let max_step = CAMERA_MAX_SPEED * crop_w_frac * step_ms as f64 / 1000.0;
-    let first_second = ((1000 / step_ms) as usize).max(1).min(fx.len());
-    let mut cam_x = median(&fx[..first_second]);
-    let mut cam_y = median(&fy[..first_second]);
-    let mut path = vec![Keyframe { t_ms: 0, x: cam_x, y: cam_y }];
-    for i in 1..grid.len() {
-        let dx = fx[i] - cam_x;
-        if dx.abs() > deadzone {
-            // Move toward the subject, easing: never all the way in one step.
-            let toward = (dx - deadzone * dx.signum()) * 0.5;
-            cam_x += toward.clamp(-max_step, max_step);
+    let hold = |v: &[f64], dz: f64| {
+        let mut out = vec![v[0]];
+        for &x in &v[1..] {
+            let cam = out[out.len() - 1];
+            let d = x - cam;
+            out.push(if d.abs() > dz { x - dz * d.signum() } else { cam });
         }
-        cam_y += (fy[i] - cam_y) * 0.2;
-        path.push(Keyframe { t_ms: grid[i].0, x: cam_x, y: cam_y });
-    }
+        out
+    };
+    let alpha = 1.0 - (-(step_ms as f64 / 1000.0) / CAMERA_TAU_S).exp();
+    let zero_phase = |v: &[f64]| {
+        let mut f = v.to_vec();
+        for i in 1..f.len() {
+            f[i] = f[i - 1] + alpha * (v[i] - f[i - 1]);
+        }
+        let mut b = f.clone();
+        for i in (0..b.len().saturating_sub(1)).rev() {
+            b[i] = b[i + 1] + alpha * (f[i] - b[i + 1]);
+        }
+        b
+    };
+    let (sx, sy) = (zero_phase(&hold(&fx, deadzone)), zero_phase(&hold(&fy, deadzone * 1.5)));
+    let path: Vec<Keyframe> =
+        grid.iter().enumerate().map(|(i, g)| Keyframe { t_ms: g.0, x: sx[i], y: sy[i] }).collect();
     simplify_path(&path)
 }
 
@@ -112,20 +122,31 @@ mod tests {
         let samples: Vec<_> = (0..40).map(|i| (i * 250, 0.5 + if i % 2 == 0 { 0.01 } else { -0.01 }, 0.4)).collect();
         let path = smooth_focus_path(&samples, 10_000, 0.3);
         assert_eq!(path.len(), 2, "jitter inside the dead zone must not create keyframes");
-        assert!((path[0].x - path[1].x).abs() < 1e-9);
+        assert!((path[0].x - path[1].x).abs() < 0.005);
     }
 
     #[test]
-    fn pan_speed_is_capped_and_path_simplified() {
-        // Subject jumps from left to right at 2 s.
-        let samples: Vec<_> = (0..40).map(|i| (i * 250, if i < 8 { 0.2 } else { 0.8 }, 0.5)).collect();
+    fn camera_keeps_up_with_a_moving_subject_without_lag() {
+        // A presenter walks steadily across the frame.
+        let samples: Vec<_> = (0..40).map(|i| (i * 250, 0.2 + 0.6 * i as f64 / 40.0, 0.5)).collect();
         let path = smooth_focus_path(&samples, 10_000, 0.3);
         assert!(path.len() <= MAX_PATH_KEYFRAMES);
-        let max_step = CAMERA_MAX_SPEED * 0.3 * 0.25;
+        let at = |t: i64| {
+            let w = path.windows(2).find(|w| w[0].t_ms <= t && t <= w[1].t_ms).unwrap();
+            w[0].x + (w[1].x - w[0].x) * (t - w[0].t_ms) as f64 / (w[1].t_ms - w[0].t_ms) as f64
+        };
+        assert!((at(5000) - 0.5).abs() < 0.03, "no lag behind the subject: {}", at(5000));
+    }
+
+    #[test]
+    fn jumps_are_eased_not_snapped() {
+        let samples: Vec<_> = (0..40).map(|i| (i * 250, if i < 20 { 0.3 } else { 0.7 }, 0.5)).collect();
+        let path = smooth_focus_path(&samples, 10_000, 0.3);
+        let last = path.last().unwrap();
+        assert!((last.x - 0.7).abs() < 0.03, "ends on the subject: {last:?}");
         for w in path.windows(2) {
-            let dt_steps = (w[1].t_ms - w[0].t_ms) as f64 / 250.0;
-            assert!((w[1].x - w[0].x).abs() <= max_step * dt_steps + 1e-9);
+            let speed = (w[1].x - w[0].x).abs() / ((w[1].t_ms - w[0].t_ms) as f64 / 1000.0);
+            assert!(speed < 0.6, "a calm pan: {w:?}");
         }
-        assert!(path.last().unwrap().x > 0.6, "camera must end near the subject");
     }
 }

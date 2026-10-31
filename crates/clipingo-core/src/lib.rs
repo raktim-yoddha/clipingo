@@ -3,6 +3,8 @@
 pub mod audio;
 pub mod camera;
 pub mod captions;
+pub mod emphasis;
+pub mod eval;
 pub mod framing;
 pub mod models;
 pub mod pacing;
@@ -13,6 +15,7 @@ pub mod source;
 pub mod system;
 pub mod tools;
 pub mod transcribe;
+pub mod zoom;
 
 /// Per-user data folder (models, cache): `%LOCALAPPDATA%\Clipingo`, `~/Library/Application Support/Clipingo`,
 /// or `$XDG_DATA_HOME/clipingo`. `CLIPINGO_DATA_DIR` overrides.
@@ -63,8 +66,12 @@ pub struct Word {
     pub end: f64,
 }
 
-/// Path of the daemon's local endpoint (named pipe on Windows, Unix socket elsewhere).
+/// Path of the daemon's local endpoint (named pipe on Windows, Unix socket elsewhere). `CLIPINGO_ENDPOINT` overrides
+/// it, so tests and a second daemon can run beside the app.
 pub fn endpoint() -> String {
+    if let Some(e) = std::env::var("CLIPINGO_ENDPOINT").ok().filter(|e| !e.is_empty()) {
+        return e;
+    }
     if cfg!(windows) {
         r"\\.\pipe\clipingo".to_string()
     } else {
