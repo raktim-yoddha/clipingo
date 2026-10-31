@@ -1,43 +1,36 @@
 # Clipingo
 
-Local-first stream clipper: a Rust core plus a native WinUI 3 app. See [PLAN.md](PLAN.md) for the full design.
+Local-first clipper for streams, podcasts and interviews: it finds the best moments in a long video and turns them into
+captioned vertical or horizontal clips, on your machine. A Rust core with a native app per OS.
+
+[Contributing](CONTRIBUTING.md) · [Architecture](docs/architecture.md) · [Protocol](docs/rpc.md) ·
+[Evals](docs/evals.md) · [Platforms](platforms/README.md)
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `crates/clipingo-core` | Pipeline library: system check, source probe, audio, local transcription, model manager, clip scorer, pacing, virtual camera |
-| `crates/clipd` | Daemon: JSON-RPC 2.0 (one JSON object per line) on `\\.\pipe\clipingo` / Unix socket |
-| `crates/clip` | CLI: `check`, `probe`, `faces`, `score`, `transcribe`, `run`, `render`, `models` |
-| `app/Clipingo` | Windows app: WinUI 3, unpackaged Win32 .exe, Desktop Acrylic, MVVM + DI |
+| `crates/clipingo-core` | The pipeline: everything that makes a clip |
+| `crates/clipd` | Daemon every app talks to: JSON-RPC over a named pipe or Unix socket |
+| `crates/clip` | Command line: `check`, `probe`, `faces`, `score`, `transcribe`, `run`, `render`, `framing`, `eval`, `models` |
+| `platforms/windows` | The Windows app (WinUI 3), installer and UI tests |
+| `platforms/macos`, `platforms/linux` | Apps to build: start here if you want one |
+| `tests/headless` | End-to-end run of the core with no UI, on any OS |
+| `docs`, `adr` | How it works, and why |
 
-## Build and run (Windows)
+## Build and run
 
 ```bash
 cargo test --workspace
-cargo build -p clipd
-dotnet build app/Clipingo/Clipingo.csproj -p:Platform=x64
+cargo build -p clipd -p clip
 ```
 
-Run `app/Clipingo/bin/x64/Debug/net10.0-windows10.0.26100.0/win-x64/Clipingo.exe`. The app starts `clipd`
-itself (from `CLIPINGO_CLIPD`, next to the app, or `target/debug`).
+Then follow your OS's page: [Windows](platforms/windows/README.md), [macOS](platforms/macos/README.md),
+[Linux](platforms/linux/README.md).
 
 **Settings → Downloads** installs FFmpeg, yt-dlp, deno, the whisper.cpp runtime and the speech models into
 `%LOCALAPPDATA%\Clipingo` on demand (tools already on `PATH` are used as they are). **Settings → System check** shows
 what is missing.
-
-### Installer and updates
-
-```bash
-powershell -File installer/build.ps1
-```
-
-builds `target\installer\Clipingo-Setup-<version>.exe` (~27 MB): a per-user Inno Setup wizard (no admin prompt) with
-the trimmed, self-contained app and `clipd`. Nothing heavy is bundled; tools and models download in the app.
-Pushing a tag `v<version>` (same as `<Version>` in `Clipingo.csproj`) runs `.github/workflows/release.yml`, which
-publishes the installer as a GitHub release. **Settings → Updates** checks the latest release (automatically at
-start-up unless turned off), verifies the installer's SHA-256 and installs it silently. The update check needs the
-releases to be reachable without signing in (a public repository, or a public releases repository).
 
 ### Transcription (local only)
 
@@ -81,14 +74,16 @@ clip in Jobs or Library) is a small non-linear editor:
 - **Clips** list with thumbnails, filtered All / 9:16 / 16:9; each exported format has its own ▶ button that plays the
   file in the app. New clip (N, from marks or 30 s from the playhead), Delete clip.
 - **Player** tabs: *Edit* plays the timeline as it will be exported (parts back to back, rough caption and title
-  preview), *Source video* shows the whole video to mark a part (In / Out, I / O) and add it to the timeline or make a
+  preview). In 9:16 it shows the source with the crop boxes that follow the people, and beside it the vertical frame
+  they make, shot by shot, with the captions; 16:9 is one screen. *Source video* shows the whole video to mark a part (In / Out, I / O) and add it to the timeline or make a
   new clip of it, *9:16 export* / *16:9 export* play the exported files. Play / pause, ±1 s (Shift ±5 s), loop,
   0.5–2× preview speed.
 - **Timeline**: filmstrip of the clip's parts and a caption track (click a word to jump there). Split at the playhead
   (S), drag a part's edges to trim, drag a part to reorder, trim to playhead (Q / W), Delete, Add clip (stitch another
   clip of the video in), zoom (Ctrl + wheel, + / −, Fit). Undo / redo for everything; changes save by themselves.
-- **Inspector**: *Clip* (title, title over the video), *Captions* (on / off, 13 styles, bottom / middle / top, size
-  60–160 %, per-part text fixes with word timing kept), *Look* (9:16 / 16:9, framing, speed 1–2×, fades, dead-air cuts).
+- **Inspector**: *Layout* (9:16 or 16:9; this shot's layouts, only the ones it can show; swap top and bottom; smart
+  zoom; framing rules), *Captions* (on / off, 13 styles, auto / bottom / middle / top, size 60–160 %, per-part text
+  fixes with word timing kept), *Clip* (title, speed 1–2×, pause cuts, fades).
 - **Export 9:16 / 16:9** (Ctrl+E) renders the parts in order: MP4, SRT and a Premiere `.xml`.
 - Exported files open in File Explorer (folder button); in Premiere Pro, File › Import the clip's `.xml`.
 
@@ -101,43 +96,27 @@ cargo run -p clip -- render <run-id> 1 2 3 style=glow title speed=1.25 framing=s
 
 Runs live in `%LOCALAPPDATA%\Clipingo\runs\<id>` (`run.json`, `transcript.json`, downloaded `source.mp4`,
 `render.json`). Exported clips go to `Videos\Clipingo\<video title> (<id>)\clip_NN_9x16.{mp4,srt,xml}`
-(`CLIPINGO_OUTPUT_DIR` overrides). Rendering cuts dead air (pauses over 2 s, fillers), frames 9:16 (faces from
-YuNet on ONNX Runtime: Full frame follows the speaker; Smart follows a talking head or stacks screen over webcam when
-the face is small; Classic = whole frame over a blur), changes speed (pitch kept), burns captions and the title,
-normalizes loudness and encodes with the first working encoder (NVENC → QSV → AMF → MF → x264).
+(`CLIPINGO_OUTPUT_DIR` overrides). Rendering cuts dead air (pauses over 2 s, fillers), frames 9:16 shot by shot,
+changes speed (pitch kept), burns captions and the title, normalizes loudness and encodes with the first working
+encoder (NVENC → QSV → AMF → MF → x264).
 
-### End-to-end tests
+### Vertical rules
 
-```bash
-powershell -File tests/e2e/make-english-stream.ps1
-powershell -File tests/e2e/app-e2e.ps1 -Source "%TEMP%\clipingo-e2e\english-stream.mp4" -Language English
-powershell -File tests/e2e/auto-e2e.ps1 -Source "%TEMP%\clipingo-e2e\english-stream.mp4"
-```
+Each camera shot gets a layout, from the faces, the motion on screen and who is talking:
 
-`app-e2e` covers Review & edit, Jobs export and the editor (trim, split + undo, stitch, caption fix, export, look
-options, playing an export, delete); `auto-e2e` covers Automatic, 16:9 and removing a run from the Library.
+| The shot shows | Layout |
+|---|---|
+| One person | **Follow**: a window on them, closer when the face is small |
+| Two people apart | **Two people**: one above the other, captions on the seam |
+| Two people close together | **Follow**: one window holding both |
+| Three or more | **Everyone**: a wide band over a blurred fill |
+| A webcam that stays in a corner (stream, gameplay) | **Face + content**: the face above the moving part of the screen; **Swap** turns it over |
+| Nobody | **Whole frame** over a blurred fill |
 
-## clipd methods
+The camera starts on the subject at every cut. **Smart zoom** pushes in on strong lines. In the editor each shot can be
+set by hand; Face + content is offered on any shot with a face. `clip framing <run-id> <rank>` prints a clip's shots.
 
-| Method | Params | Result |
-|---|---|---|
-| `version` | — | `{ version }` |
-| `system.check` | — | tools, NVIDIA GPUs, probed H.264 encoders (NVENC → QSV → AMF → MF → x264) with fix hints, selected encoder, whisper-cli, speech models |
-| `source.probe` | `{ input }` file path or https YouTube link | title, channel, duration, size, fps, views, upload date |
-| `models.list` | — | whisper-cli path, models with installed state |
-| `models.install` | `{ id: english\|hinglish\|hindi\|runtime }` | `{ path }`; streams `progress` notifications `{request, stage, done, total}` first |
-| `transcript.run` | `{ input, options?: {language: auto\|english\|hindi\|hinglish, refresh} }` | words with times, model, language |
-| `run.create` | `{ input, options?: {transcribe, find} }` (`find` as in `scorer.find`) file or YouTube link | saved run: source, media, transcript summary, ranked candidates; streams progress |
-| `run.get` | `{ id }` | a saved run |
-| `run.render` | `{ id, ranks: [1,2], options?: {format: vertical\|horizontal, framing: smart\|full\|classic, vision_check, cut_dead_air, captions, caption_style, caption_position: bottom\|middle\|top, caption_size, fade, title, speed} }` | per clip: `.mp4`, `.srt`, Premiere `.xml`, duration, dead air removed, encoder; streams progress |
-| `run.list` | — | saved runs, newest first, with their exported clips |
-| `run.open` | `{ id }` | the run, its clips folder, exported clips and last export options |
-| `run.words` | `{ id, start, end }` | transcript words in that part of the source |
-| `run.edit` | `{ id, rank, start, end, title, segments?: [[start, end], …] }` | saves a clip's trim (or the source ranges it plays in order) and title; the next export uses them |
-| `run.add_clip` | `{ id, start, end, title }` | a clip marked by hand (next free rank) |
-| `run.remove_clip` | `{ id, rank }` | removes a clip from the run (exported files stay) |
-| `run.thumbs` | `{ id, times: [s], height? }` | JPEG frames of the video at those times (cached in the run folder) |
-| `run.delete` | `{ id }` | removes a saved run (exported clips stay) |
-| `run.retext` | `{ id, start, end, text }` | corrected caption text for that span (word times kept or shared) |
-| `captions.presets` | — | the 13 caption styles: id, name, description, font, colours |
-| `scorer.find` | `{ words: [{w,s,e}], options?: {min_len,max_len,lengths: [[min,max]],count,within: [start,end],request} }` | ranked clip candidates |
+### Evals
+
+`clip eval <run-id> [captions.vtt]` scores a run, from transcript to export, and `tests/headless/run.py` runs the whole
+process on labelled videos. See [docs/evals.md](docs/evals.md).

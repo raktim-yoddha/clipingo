@@ -1,0 +1,6 @@
+---
+description: The engineering contract for this repository
+alwaysApply: true
+---
+
+Read `AGENTS.md` (identical to `CLAUDE.md`) before any change and follow it exactly. It is the only source of rules for this repository.
