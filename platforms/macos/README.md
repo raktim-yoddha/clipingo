@@ -1,7 +1,7 @@
 # Clipingo for macOS
 
-No app yet. This page is everything needed to start one. CI is set to compile and test the core on Apple silicon
-on every push; nothing has been run with real media on a Mac yet.
+No app yet. This page is everything needed to start one. CI compiles the core and passes its tests on Apple silicon;
+nothing has been run with real media on a Mac yet.
 
 ## Suggested stack
 

@@ -1,7 +1,7 @@
 # Clipingo for Linux
 
-No app yet. This page is everything needed to start one. CI is set to compile and test the core on Ubuntu on every
-push; nothing has been run with real media on Linux yet.
+No app yet. This page is everything needed to start one. CI compiles the core and passes its tests on Ubuntu; nothing
+has been run with real media on Linux yet.
 
 ## Suggested stack
 
