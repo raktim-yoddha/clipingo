@@ -395,7 +395,7 @@ mod tests {
     fn ass_highlights_each_word_and_escapes_markup() {
         let words = [w("hello", 0.0, 0.4), w("{evil}", 0.5, 0.9)];
         let a = ass(&words, 1080, 1920, preset("pop"), Placement::default(), None, &[]);
-        assert!(a.contains("PlayResY: 1920") && a.contains("Segoe UI Black"));
+        assert!(a.contains("PlayResY: 1920") && a.contains(system_font("Segoe UI Black")));
         let ev = events(&a);
         assert_eq!(ev.len(), 2);
         assert!(ev[0].contains("0:00:00.00,0:00:00.50") && ev[0].contains("\\fscx82"), "page pops in: {}", ev[0]);
